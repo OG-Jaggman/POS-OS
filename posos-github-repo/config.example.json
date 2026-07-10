@@ -1,0 +1,8 @@
+{
+  "github_repo": "OWNER/posos",
+  "update_channel": "stable",
+  "auto_check_updates": true,
+  "currency_symbol": "$",
+  "receipt_printer_device": "",
+  "store_name": "POSOS"
+}
