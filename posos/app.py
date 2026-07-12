@@ -9,6 +9,7 @@ from tkinter import messagebox, ttk
 from .db import Database
 from .printer import PrinterError, build_receipt_text, print_receipt
 from .security import hash_pin, verify_pin
+from .updater import UpdateError, check_latest
 
 DATA_DIR = Path(os.environ.get("POSOS_DATA_DIR", Path.home() / ".local/share/posos"))
 DB = Database(DATA_DIR / "posos.db")
@@ -107,7 +108,8 @@ class POSOS(tk.Tk):
         self.current_user = None
         self.cart = {}
         self.option_add("*Font", ("DejaVu Sans", 12))
-        self.protocol("WM_DELETE_WINDOW", self.manager_exit)
+        # Kiosk safety: closing the main window would leave the OS on an unusable desktop.
+        self.protocol("WM_DELETE_WINDOW", lambda: None)
         try:
             self.attributes("-fullscreen", os.environ.get("POSOS_WINDOWED") != "1")
         except Exception:
@@ -281,36 +283,29 @@ class POSOS(tk.Tk):
         raw = self.ask_number("Cash payment", f"Total: {money(total)}\nCash received", decimal=True)
         try:
             cash = parse_money(raw or "")
-            if cash < total: raise ValueError
         except Exception:
-            messagebox.showerror("Payment", "Cash amount must be at least the total.")
-            return
+            messagebox.showerror("Cash payment", "Enter a valid amount."); return
+        if cash < total:
+            messagebox.showerror("Cash payment", "Cash received is less than the total."); return
+        sale_id = DB.complete_sale(self.current_user["id"], list(self.cart.values()), cash)
         change = cash - total
-        lines = list(self.cart.values())
-        sale_id, created_at = DB.complete_sale(self.current_user["id"], lines, total, cash, change)
-        printer = DB.default_printer()
-        print_error = None
-        if printer:
-            receipt = build_receipt_text(DB.get_setting("store_name", "POS OS"), sale_id,
-                                         self.current_user["name"], created_at, lines,
-                                         total, cash, change, printer["paper_width_mm"])
+        messagebox.showinfo("Sale complete", f"Change due: {money(change)}")
+        default = DB.default_printer()
+        if default:
             try:
-                print_receipt(dict(printer), receipt)
+                receipt = build_receipt_text(DB.get_setting("store_name", "POS OS"), sale_id, self.current_user["name"], "CASH", list(self.cart.values()), total, cash, change, default["paper_width_mm"])
+                print_receipt(dict(default), receipt)
             except PrinterError as exc:
-                print_error = str(exc)
-        text = f"Sale #{sale_id}\nChange: {money(change)}"
-        if print_error: text += f"\n\nReceipt was saved, but printing failed:\n{print_error}"
-        messagebox.showinfo("Sale complete", text)
-        self.cart = {}
-        self.refresh_cart()
+                messagebox.showwarning("Receipt printer", f"Sale completed, but the receipt did not print:\n{exc}")
+        self.register_screen()
 
     def manager_screen(self):
         if self.current_user["role"] != "manager": return
         self.clear()
         top = ttk.Frame(self, padding=8); top.pack(fill="x")
         ttk.Label(top, text="Manager Settings", font=("DejaVu Sans", 22, "bold")).pack(side="left")
-        ttk.Button(top, text="Back to register", command=self.register_screen).pack(side="right", ipadx=8, ipady=6)
-        notebook = ttk.Notebook(self); notebook.pack(fill="both", expand=True, padx=10, pady=10)
+        ttk.Button(top, text="Back to register", command=self.register_screen).pack(side="right", ipady=6)
+        notebook = ttk.Notebook(self); notebook.pack(fill="both", expand=True, padx=8, pady=8)
         tabs = {name: ttk.Frame(notebook, padding=8) for name in ("Items", "Employees", "Sales", "Receipt Printers", "System")}
         for name, tab in tabs.items(): notebook.add(tab, text=name)
         self.build_items_tab(tabs["Items"])
@@ -320,121 +315,102 @@ class POSOS(tk.Tk):
         self.build_system_tab(tabs["System"])
 
     def build_items_tab(self, parent):
-        tree = ttk.Treeview(parent, columns=("barcode", "price", "category", "stock", "active"), show="tree headings")
+        tree = ttk.Treeview(parent, columns=("barcode", "price", "stock", "category"), show="tree headings")
+        for col, text in [("#0", "Item"), ("barcode", "Barcode"), ("price", "Price"), ("stock", "Stock"), ("category", "Category")]: tree.heading(col, text=text)
         tree.pack(fill="both", expand=True)
-        for col, text in [("#0", "Name"), ("barcode", "Barcode"), ("price", "Price"), ("category", "Category"), ("stock", "Stock"), ("active", "Active")]: tree.heading(col, text=text)
         def load():
             tree.delete(*tree.get_children())
-            for item in DB.items(): tree.insert("", "end", iid=str(item["id"]), text=item["name"], values=(item["barcode"] or "", money(item["price_cents"]), item["category"], item["stock_qty"], "Yes" if item["active"] else "No"))
+            for row in DB.items(False): tree.insert("", "end", iid=str(row["id"]), text=row["name"], values=(row["barcode"], money(row["price_cents"]), row["stock_qty"], row["category"]))
         def edit(new=False):
-            iid = None if new or not tree.selection() else int(tree.selection()[0])
-            row = DB.item_by_id(iid) if iid else None
+            row = None if new or not tree.selection() else DB.item_by_id(int(tree.selection()[0]))
             name = self.ask_text("Item", "Item name", row["name"] if row else "")
-            if name is None: return
-            barcode = self.ask_number("Item", "Barcode (may be blank)", row["barcode"] if row and row["barcode"] else "")
-            price = self.ask_number("Item", "Price", f"{row['price_cents']/100:.2f}" if row else "0.00", decimal=True)
-            category = self.ask_text("Item", "Category", row["category"] if row else "General")
-            stock = self.ask_number("Item", "Stock quantity", str(row["stock_qty"] if row else 0))
-            low = self.ask_number("Item", "Low-stock warning", str(row["low_stock"] if row else 0))
+            if not name: return
+            barcode = self.ask_text("Item", "Barcode", row["barcode"] if row else "")
+            price = self.ask_number("Item", "Price", money(row["price_cents"]) if row else "0.00", decimal=True)
+            category = self.ask_text("Item", "Category", row["category"] if row else "")
+            stock = self.ask_number("Item", "Inventory quantity", str(row["stock_qty"] if row else 0))
+            low = self.ask_number("Item", "Low-stock level", str(row["low_stock"] if row else 0))
             try:
-                DB.save_item(iid, name.strip(), barcode or "", parse_money(price or "0"), (category or "General").strip(), int(stock or 0), int(low or 0), True)
+                DB.save_item(row["id"] if row else None, name.strip(), barcode.strip(), parse_money(price), category.strip(), int(stock), int(low), True)
                 load()
-            except Exception as exc: messagebox.showerror("Cannot save", str(exc))
-        bar = ttk.Frame(parent); bar.pack(fill="x", pady=(8, 0))
-        ttk.Button(bar, text="Add item", command=lambda: edit(True)).pack(side="left", fill="x", expand=True, ipady=9)
-        ttk.Button(bar, text="Edit selected", command=edit).pack(side="left", fill="x", expand=True, ipady=9)
-        ttk.Button(bar, text="Delete selected", command=lambda: self._delete_selected(tree, DB.delete_item, load)).pack(side="left", fill="x", expand=True, ipady=9)
+            except Exception as exc: messagebox.showerror("Item", str(exc))
+        bar = ttk.Frame(parent); bar.pack(fill="x", pady=(8,0))
+        for text, command in [("Add item", lambda: edit(True)), ("Edit selected", edit), ("Delete selected", lambda: self._delete_selected(tree, DB.delete_item, load))]:
+            ttk.Button(bar, text=text, command=command).pack(side="left", fill="x", expand=True, ipady=9)
         load()
 
     def build_employees_tab(self, parent):
         tree = ttk.Treeview(parent, columns=("role", "active"), show="tree headings")
-        tree.pack(fill="both", expand=True); tree.heading("#0", text="Name"); tree.heading("role", text="Role"); tree.heading("active", text="Active")
+        tree.heading("#0", text="Employee"); tree.heading("role", text="Role"); tree.heading("active", text="Active")
+        tree.pack(fill="both", expand=True)
         def load():
             tree.delete(*tree.get_children())
-            for emp in DB.employees(): tree.insert("", "end", iid=str(emp["id"]), text=emp["name"], values=(emp["role"], "Yes" if emp["active"] else "No"))
+            for row in DB.employees(): tree.insert("", "end", iid=str(row["id"]), text=row["name"], values=(row["role"], "Yes" if row["active"] else "No"))
         def edit(new=False):
-            eid = None if new or not tree.selection() else int(tree.selection()[0])
-            row = DB.employee_by_id(eid) if eid else None
+            row = None if new or not tree.selection() else DB.employee_by_id(int(tree.selection()[0]))
             name = self.ask_text("Employee", "Employee name", row["name"] if row else "")
-            if name is None: return
-            pin = self.ask_number("Employee", "New PIN (leave blank to keep current PIN)", secret=True)
+            if not name: return
             role = self.ask_text("Employee", "Role: cashier or manager", row["role"] if row else "cashier")
-            role = (role or "cashier").lower().strip()
+            role = role.lower().strip()
             if role not in ("cashier", "manager"):
                 messagebox.showerror("Role", "Role must be cashier or manager."); return
+            pin = self.ask_number("Employee", "New PIN (leave blank to keep current)", secret=True)
             try:
                 pin_hash = hash_pin(pin) if pin else None
-                if not eid and not pin_hash: raise ValueError("A PIN is required for a new employee")
+                eid = row["id"] if row else None
                 if eid: DB.update_employee(eid, name.strip(), role, True, pin_hash)
-                else: DB.add_employee(name.strip(), pin_hash, role)
+                elif pin_hash: DB.add_employee(name.strip(), pin_hash, role)
+                else: raise ValueError("A PIN is required for a new employee.")
                 load()
-            except Exception as exc: messagebox.showerror("Cannot save", str(exc))
-        bar = ttk.Frame(parent); bar.pack(fill="x", pady=(8, 0))
-        ttk.Button(bar, text="Add employee", command=lambda: edit(True)).pack(side="left", fill="x", expand=True, ipady=9)
-        ttk.Button(bar, text="Edit selected", command=edit).pack(side="left", fill="x", expand=True, ipady=9)
-        ttk.Button(bar, text="Delete selected", command=lambda: self._delete_selected(tree, DB.delete_employee, load)).pack(side="left", fill="x", expand=True, ipady=9)
+            except Exception as exc: messagebox.showerror("Employee", str(exc))
+        bar = ttk.Frame(parent); bar.pack(fill="x", pady=(8,0))
+        for text, command in [("Add employee", lambda: edit(True)), ("Edit selected", edit), ("Delete selected", lambda: self._delete_selected(tree, DB.delete_employee, load))]:
+            ttk.Button(bar, text=text, command=command).pack(side="left", fill="x", expand=True, ipady=9)
         load()
 
-    @staticmethod
-    def _delete_selected(tree, action, reload_action):
-        for iid in tree.selection(): action(int(iid))
-        reload_action()
-
     def build_sales_tab(self, parent):
-        tree = ttk.Treeview(parent, columns=("employee", "total", "cash", "change", "date"), show="tree headings")
-        tree.pack(fill="both", expand=True); tree.heading("#0", text="Sale")
-        for col, text in [("employee", "Employee"), ("total", "Total"), ("cash", "Cash"), ("change", "Change"), ("date", "Date")]: tree.heading(col, text=text)
-        for sale in DB.sales(): tree.insert("", "end", text=f"#{sale['id']}", values=(sale["employee_name"], money(sale["total_cents"]), money(sale["cash_cents"]), money(sale["change_cents"]), sale["created_at"]))
+        tree = ttk.Treeview(parent, columns=("employee", "total", "cash", "change", "time"), show="headings")
+        for col in ("employee", "total", "cash", "change", "time"): tree.heading(col, text=col.title())
+        tree.pack(fill="both", expand=True)
+        for row in DB.sales(): tree.insert("", "end", values=(row["employee_name"], money(row["total_cents"]), money(row["cash_cents"]), money(row["change_cents"]), row["created_at"]))
 
     def build_printers_tab(self, parent):
-        info = ttk.Label(parent, text="Add network/IP receipt printers, Linux/CUPS queues, Windows printers, or a test file printer. 80 mm uses 48 characters per line; 58 mm uses 32.", wraplength=950)
-        info.pack(anchor="w", pady=(0, 8))
-        tree = ttk.Treeview(parent, columns=("type", "connection", "paper", "default", "active"), show="tree headings")
+        tree = ttk.Treeview(parent, columns=("type", "destination", "paper", "default"), show="tree headings")
+        for col, text in [("#0", "Printer"), ("type", "Type"), ("destination", "Destination"), ("paper", "Paper"), ("default", "Default")]: tree.heading(col, text=text)
         tree.pack(fill="both", expand=True)
-        for col, text in [("#0", "Name"), ("type", "Type"), ("connection", "Connection"), ("paper", "Paper"), ("default", "Default"), ("active", "Active")]: tree.heading(col, text=text)
-        def connection(row):
+        def destination(row):
             if row["printer_type"] == "network": return f"{row['host']}:{row['port']}"
             if row["printer_type"] in ("system", "cups", "windows"): return row["queue_name"] or "Default queue"
             return row["file_path"]
         def load():
             tree.delete(*tree.get_children())
-            for row in DB.printers(): tree.insert("", "end", iid=str(row["id"]), text=row["name"], values=(row["printer_type"], connection(row), f"{row['paper_width_mm']} mm", "Yes" if row["is_default"] else "No", "Yes" if row["active"] else "No"))
+            for row in DB.printers(): tree.insert("", "end", iid=str(row["id"]), text=row["name"], values=(row["printer_type"], destination(row), f"{row['paper_width_mm']} mm", "Yes" if row["is_default"] else ""))
         def edit(new=False):
-            pid = None if new or not tree.selection() else int(tree.selection()[0])
-            row = DB.printer_by_id(pid) if pid else None
-            win = tk.Toplevel(self); win.title("Receipt Printer"); win.geometry("760x620"); win.transient(self); win.grab_set(); win.configure(padx=14, pady=14)
-            variables = {
-                "name": tk.StringVar(value=row["name"] if row else "Receipt Printer"),
-                "type": tk.StringVar(value=row["printer_type"] if row else "network"),
-                "host": tk.StringVar(value=row["host"] if row else ""),
-                "port": tk.StringVar(value=str(row["port"] if row else 9100)),
-                "queue": tk.StringVar(value=row["queue_name"] if row else ""),
-                "file": tk.StringVar(value=row["file_path"] if row else str(DATA_DIR / "test-receipt.txt")),
-                "paper": tk.StringVar(value=str(row["paper_width_mm"] if row else 80)),
-                "cut": tk.BooleanVar(value=bool(row["auto_cut"]) if row else True),
-                "default": tk.BooleanVar(value=bool(row["is_default"]) if row else not DB.printers()),
-                "active": tk.BooleanVar(value=bool(row["active"]) if row else True),
-            }
+            row = None if new or not tree.selection() else DB.printer_by_id(int(tree.selection()[0]))
+            win = tk.Toplevel(self); win.title("Receipt printer"); win.transient(self); win.grab_set(); win.geometry("760x650")
+            outer = ttk.Frame(win, padding=16); outer.pack(fill="both", expand=True)
+            defaults = {"name": row["name"] if row else "Receipt Printer", "type": row["printer_type"] if row else "network", "host": row["host"] if row else "", "port": str(row["port"] if row else 9100), "queue": row["queue_name"] if row else "", "file": row["file_path"] if row else str(DATA_DIR / "test-receipt.txt"), "paper": str(row["paper_width_mm"] if row else 80)}
+            variables = {k: tk.StringVar(value=v) for k,v in defaults.items()}
             fields = [("Printer name", "name"), ("IP address / hostname", "host"), ("Port", "port"), ("System/Windows queue name", "queue"), ("Test file path", "file")]
-            for r, (label, key) in enumerate(fields):
-                ttk.Label(win, text=label).grid(row=r, column=0, sticky="w", pady=6)
-                ttk.Entry(win, textvariable=variables[key], font=("DejaVu Sans", 14)).grid(row=r, column=1, sticky="ew", padx=6, pady=6, ipady=7)
-                is_num = key == "port"
-                ttk.Button(win, text="⌨", command=lambda k=key, n=is_num: self._edit_var(variables[k], n)).grid(row=r, column=2, padx=4, pady=6, ipady=7)
-            ttk.Label(win, text="Printer type").grid(row=5, column=0, sticky="w", pady=6)
+            for idx, (label, key) in enumerate(fields):
+                ttk.Label(outer, text=label).grid(row=idx, column=0, sticky="w", pady=6)
+                ttk.Entry(outer, textvariable=variables[key]).grid(row=idx, column=1, sticky="ew", padx=6, pady=6, ipady=6)
+                ttk.Button(outer, text="⌨", command=lambda v=variables[key], n=(key=="port"): self._edit_var(v,n)).grid(row=idx, column=2, pady=6)
+            ttk.Label(outer, text="Printer type").grid(row=5, column=0, sticky="w", pady=6)
             ttk.Combobox(win, textvariable=variables["type"], state="readonly", values=("network", "system", "cups", "windows", "file")).grid(row=5, column=1, sticky="ew", padx=6, pady=6)
-            ttk.Label(win, text="Paper width").grid(row=6, column=0, sticky="w", pady=6)
-            ttk.Combobox(win, textvariable=variables["paper"], state="readonly", values=("80", "58")).grid(row=6, column=1, sticky="ew", padx=6, pady=6)
-            ttk.Checkbutton(win, text="Auto-cut after receipt", variable=variables["cut"]).grid(row=7, column=0, columnspan=2, sticky="w", pady=6)
-            ttk.Checkbutton(win, text="Use as default printer", variable=variables["default"]).grid(row=8, column=0, columnspan=2, sticky="w", pady=6)
-            ttk.Checkbutton(win, text="Printer enabled", variable=variables["active"]).grid(row=9, column=0, columnspan=2, sticky="w", pady=6)
-            win.columnconfigure(1, weight=1)
+            ttk.Label(outer, text="Receipt paper width").grid(row=6, column=0, sticky="w", pady=6)
+            ttk.Combobox(outer, textvariable=variables["paper"], state="readonly", values=("80", "58")).grid(row=6, column=1, sticky="ew", padx=6, pady=6)
+            auto_cut = tk.BooleanVar(value=bool(row["auto_cut"]) if row else True); default = tk.BooleanVar(value=bool(row["is_default"]) if row else True)
+            ttk.Checkbutton(outer, text="Send auto-cut command", variable=auto_cut).grid(row=7, column=0, columnspan=2, sticky="w", pady=8)
+            ttk.Checkbutton(outer, text="Use as default receipt printer", variable=default).grid(row=8, column=0, columnspan=2, sticky="w", pady=8)
+            ttk.Label(outer, text="Network printers normally use raw ESC/POS on TCP port 9100. System/CUPS and Windows types use an installed printer queue.", wraplength=650).grid(row=9, column=0, columnspan=3, sticky="w", pady=12)
+            outer.columnconfigure(1, weight=1)
             def save():
                 try:
-                    DB.save_printer(pid, variables["name"].get().strip(), variables["type"].get(), variables["host"].get().strip(), int(variables["port"].get() or 9100), variables["queue"].get().strip(), variables["file"].get().strip(), int(variables["paper"].get()), variables["cut"].get(), variables["default"].get(), variables["active"].get())
+                    DB.save_printer(row["id"] if row else None, variables["name"].get().strip(), variables["type"].get(), variables["host"].get().strip(), int(variables["port"].get() or 9100), variables["queue"].get().strip(), variables["file"].get().strip(), int(variables["paper"].get()), auto_cut.get(), default.get(), True)
                     win.destroy(); load()
                 except Exception as exc: messagebox.showerror("Printer", str(exc), parent=win)
-            ttk.Button(win, text="SAVE PRINTER", command=save).grid(row=10, column=0, columnspan=3, sticky="ew", pady=14, ipady=12)
+            ttk.Button(outer, text="Save printer", command=save).grid(row=10, column=0, columnspan=3, sticky="ew", ipady=12)
         def test():
             if not tree.selection(): return
             row = DB.printer_by_id(int(tree.selection()[0]))
@@ -460,7 +436,7 @@ class POSOS(tk.Tk):
         ttk.Button(store, text="⌨", command=lambda: self._edit_var(store_name)).pack(side="left")
         ttk.Button(store, text="Save", command=lambda: DB.set_setting("store_name", store_name.get().strip() or "POS OS")).pack(side="left", padx=5)
         ttk.Button(parent, text="Back up database", command=self.backup_database).pack(anchor="w", fill="x", pady=5, ipady=8)
-        ttk.Button(parent, text="Exit POS OS", command=self.destroy).pack(anchor="w", fill="x", pady=5, ipady=8)
+        ttk.Button(parent, text="Check for updates", command=self.check_for_updates).pack(anchor="w", fill="x", pady=5, ipady=8)
 
     def backup_database(self):
         destination = DATA_DIR / "backups"
@@ -469,8 +445,46 @@ class POSOS(tk.Tk):
         shutil.copy2(DB.path, filename)
         messagebox.showinfo("Backup", f"Backup saved to {filename}")
 
+    def check_for_updates(self):
+        repo = DB.get_setting("github_repo", "OG-Jaggman/POS-OS")
+        version_file = Path(__file__).resolve().parent.parent / "VERSION"
+        try:
+            current = version_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            current = "0.0.0"
+
+        status = tk.Toplevel(self)
+        status.title("POS OS Updates")
+        status.transient(self)
+        status.grab_set()
+        status.attributes("-topmost", True)
+        status.geometry("700x420")
+        frame = ttk.Frame(status, padding=24)
+        frame.pack(fill="both", expand=True)
+        label = ttk.Label(frame, text="Checking GitHub for updates…", font=("DejaVu Sans", 18, "bold"), wraplength=640, justify="center")
+        label.pack(fill="both", expand=True, pady=20)
+        close = ttk.Button(frame, text="Close", command=status.destroy, state="disabled")
+        close.pack(fill="x", ipady=10)
+
+        def do_check():
+            try:
+                result = check_latest(repo, current)
+                latest = result.get("version") or "unknown"
+                if result.get("available"):
+                    notes = (result.get("notes") or "No release notes were provided.").strip()
+                    text = f"Update available: v{latest}\n\nInstalled version: v{current}\n\n{notes}"
+                else:
+                    text = f"POS OS is up to date.\n\nInstalled version: v{current}"
+            except Exception as exc:
+                text = f"Could not check for updates.\n\n{exc}"
+            label.configure(text=text)
+            close.configure(state="normal")
+
+        self.after(150, do_check)
+
     def manager_exit(self):
-        if self.current_user and self.current_user["role"] == "manager": self.destroy()
+        # Kept as a no-op for older internal calls. POS OS is a kiosk and must stay open.
+        return
 
 
 def main():
