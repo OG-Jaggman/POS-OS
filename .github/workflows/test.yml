@@ -1,0 +1,27 @@
+name: Test POS OS
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile Python files
+        run: python -m py_compile posos/*.py
+      - name: Test receipt layouts
+        run: |
+          python - <<'PY'
+          from posos.printer import build_receipt_text
+          lines=[{'name':'Test Item','qty':2,'price_cents':199}]
+          for width, expected in ((58,32),(80,48)):
+              text=build_receipt_text('POS OS',1,'Manager','TEST',lines,398,500,102,width)
+              assert max(len(line) for line in text.splitlines()) <= expected
+          print('Receipt tests passed')
+          PY

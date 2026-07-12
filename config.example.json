@@ -1,8 +1,7 @@
 {
-  "github_repo": "OWNER/posos",
+  "github_repo": "OG-Jaggman/POS-OS",
   "update_channel": "stable",
   "auto_check_updates": true,
   "currency_symbol": "$",
-  "receipt_printer_device": "",
-  "store_name": "POSOS"
+  "store_name": "POS OS"
 }

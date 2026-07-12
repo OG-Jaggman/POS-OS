@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from pathlib import Path
 from datetime import datetime
@@ -47,7 +48,23 @@ CREATE TABLE IF NOT EXISTS settings (
  key TEXT PRIMARY KEY,
  value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS printers (
+ id INTEGER PRIMARY KEY,
+ name TEXT NOT NULL,
+ printer_type TEXT NOT NULL CHECK(printer_type IN ('network','system','cups','windows','file')),
+ host TEXT NOT NULL DEFAULT '',
+ port INTEGER NOT NULL DEFAULT 9100,
+ queue_name TEXT NOT NULL DEFAULT '',
+ file_path TEXT NOT NULL DEFAULT '',
+ paper_width_mm INTEGER NOT NULL DEFAULT 80 CHECK(paper_width_mm IN (58,80)),
+ auto_cut INTEGER NOT NULL DEFAULT 1,
+ is_default INTEGER NOT NULL DEFAULT 0,
+ active INTEGER NOT NULL DEFAULT 1,
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
 """
+
 
 class Database:
     def __init__(self, path: Path):
@@ -86,12 +103,39 @@ class Database:
         self.conn.commit()
     def delete_item(self,i): self.conn.execute('DELETE FROM items WHERE id=?',(i,)); self.conn.commit()
     def complete_sale(self,employee_id,lines,total,cash,change):
-        cur=self.conn.execute('INSERT INTO sales(employee_id,total_cents,cash_cents,change_cents,created_at) VALUES(?,?,?,?,?)',(employee_id,total,cash,change,self.now()))
+        created=self.now()
+        cur=self.conn.execute('INSERT INTO sales(employee_id,total_cents,cash_cents,change_cents,created_at) VALUES(?,?,?,?,?)',(employee_id,total,cash,change,created))
         sid=cur.lastrowid
         for line in lines:
             self.conn.execute('INSERT INTO sale_lines(sale_id,item_id,item_name,unit_price_cents,quantity,line_total_cents) VALUES(?,?,?,?,?,?)',(sid,line['id'],line['name'],line['price_cents'],line['qty'],line['price_cents']*line['qty']))
             if line['id']:
                 self.conn.execute('UPDATE items SET stock_qty=MAX(0,stock_qty-?) WHERE id=?',(line['qty'],line['id']))
-        self.conn.commit(); return sid
+        self.conn.commit(); return sid, created
     def sales(self,limit=100):
         return self.conn.execute('SELECT sales.*,employees.name employee_name FROM sales JOIN employees ON employees.id=sales.employee_id ORDER BY sales.id DESC LIMIT ?',(limit,)).fetchall()
+    def sale_lines(self,sale_id): return self.conn.execute('SELECT * FROM sale_lines WHERE sale_id=? ORDER BY id',(sale_id,)).fetchall()
+
+    def get_setting(self,key,default=None):
+        row=self.conn.execute('SELECT value FROM settings WHERE key=?',(key,)).fetchone()
+        if not row: return default
+        try: return json.loads(row['value'])
+        except Exception: return row['value']
+    def set_setting(self,key,value):
+        data=json.dumps(value)
+        self.conn.execute('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',(key,data)); self.conn.commit()
+
+    def printers(self,active_only=False):
+        q='SELECT * FROM printers' + (' WHERE active=1' if active_only else '') + ' ORDER BY is_default DESC,name'
+        return self.conn.execute(q).fetchall()
+    def printer_by_id(self,pid): return self.conn.execute('SELECT * FROM printers WHERE id=?',(pid,)).fetchone()
+    def default_printer(self): return self.conn.execute('SELECT * FROM printers WHERE active=1 ORDER BY is_default DESC,id LIMIT 1').fetchone()
+    def save_printer(self,pid,name,printer_type,host,port,queue_name,file_path,paper_width_mm,auto_cut,is_default,active):
+        t=self.now()
+        if is_default: self.conn.execute('UPDATE printers SET is_default=0')
+        values=(name,printer_type,host,int(port),queue_name,file_path,int(paper_width_mm),int(auto_cut),int(is_default),int(active),t)
+        if pid:
+            self.conn.execute('UPDATE printers SET name=?,printer_type=?,host=?,port=?,queue_name=?,file_path=?,paper_width_mm=?,auto_cut=?,is_default=?,active=?,updated_at=? WHERE id=?',values+(pid,))
+        else:
+            self.conn.execute('INSERT INTO printers(name,printer_type,host,port,queue_name,file_path,paper_width_mm,auto_cut,is_default,active,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',values+(t,))
+        self.conn.commit()
+    def delete_printer(self,pid): self.conn.execute('DELETE FROM printers WHERE id=?',(pid,)); self.conn.commit()

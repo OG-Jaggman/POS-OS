@@ -1,1 +1,3 @@
 Pillow>=10.0
+# Optional on Windows for direct Windows printer queues:
+# pywin32>=306; platform_system == "Windows"
