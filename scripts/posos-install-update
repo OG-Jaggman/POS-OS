@@ -1,0 +1,114 @@
+#!/bin/bash
+set -euo pipefail
+
+if [[ $EUID -ne 0 ]]; then
+  echo "This updater helper must run as root." >&2
+  exit 1
+fi
+
+REPO="${1:-OG-Jaggman/POS-OS}"
+BRANCH="${2:-main}"
+EXPECTED_VERSION="${3:-}"
+
+case "$REPO" in
+  OG-Jaggman/POS-OS) ;;
+  *) echo "Refusing unapproved repository: $REPO" >&2; exit 2 ;;
+esac
+
+case "$BRANCH" in
+  main) ;;
+  *) echo "Refusing unapproved branch: $BRANCH" >&2; exit 2 ;;
+esac
+
+DATA_DIR=/var/lib/posos
+VERSIONS_DIR=/opt/posos/versions
+CURRENT_LINK=/opt/posos/current
+WORK_DIR=$(mktemp -d /var/tmp/posos-update.XXXXXX)
+ARCHIVE="$WORK_DIR/source.zip"
+EXTRACT_DIR="$WORK_DIR/source"
+BACKUP_DIR="$DATA_DIR/backups"
+LOG_FILE="$DATA_DIR/update.log"
+OLD_TARGET=$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)
+
+cleanup() {
+  rm -rf "$WORK_DIR"
+}
+trap cleanup EXIT
+
+mkdir -p "$BACKUP_DIR" "$VERSIONS_DIR"
+chmod 0750 "$DATA_DIR" "$BACKUP_DIR" 2>/dev/null || true
+
+printf '\n=== POS OS update %s ===\n' "$(date -Is)" >>"$LOG_FILE"
+printf 'Repository: %s branch %s\n' "$REPO" "$BRANCH" >>"$LOG_FILE"
+
+python3 - "$REPO" "$BRANCH" "$ARCHIVE" <<'PY'
+import sys
+import urllib.request
+repo, branch, destination = sys.argv[1:]
+url = f"https://codeload.github.com/{repo}/zip/refs/heads/{branch}"
+request = urllib.request.Request(url, headers={"User-Agent": "POSOS-Updater", "Cache-Control": "no-cache"})
+with urllib.request.urlopen(request, timeout=60) as response, open(destination, "wb") as output:
+    while True:
+        chunk = response.read(1024 * 1024)
+        if not chunk:
+            break
+        output.write(chunk)
+PY
+
+mkdir -p "$EXTRACT_DIR"
+python3 - "$ARCHIVE" "$EXTRACT_DIR" <<'PY'
+import os
+import sys
+import zipfile
+archive, destination = sys.argv[1:]
+with zipfile.ZipFile(archive) as zf:
+    for member in zf.infolist():
+        target = os.path.realpath(os.path.join(destination, member.filename))
+        root = os.path.realpath(destination) + os.sep
+        if not target.startswith(root):
+            raise SystemExit("Unsafe path in update archive")
+    zf.extractall(destination)
+PY
+
+SOURCE_ROOT=$(find "$EXTRACT_DIR" -mindepth 1 -maxdepth 1 -type d | head -n1)
+test -n "$SOURCE_ROOT"
+test -f "$SOURCE_ROOT/VERSION"
+test -d "$SOURCE_ROOT/posos"
+test -f "$SOURCE_ROOT/requirements.txt"
+
+VERSION=$(tr -d '[:space:]' <"$SOURCE_ROOT/VERSION")
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9]+)?$ ]] || {
+  echo "Invalid VERSION value: $VERSION" >&2
+  exit 3
+}
+
+if [[ -n "$EXPECTED_VERSION" && "$VERSION" != "$EXPECTED_VERSION" ]]; then
+  echo "Downloaded version $VERSION did not match expected $EXPECTED_VERSION" >&2
+  exit 3
+fi
+
+TARGET="$VERSIONS_DIR/$VERSION"
+STAGING="$VERSIONS_DIR/.${VERSION}.staging"
+rm -rf "$STAGING"
+mkdir -p "$STAGING"
+cp -a "$SOURCE_ROOT/posos" "$SOURCE_ROOT/VERSION" "$SOURCE_ROOT/requirements.txt" "$STAGING/"
+
+python3 -m venv "$STAGING/venv"
+"$STAGING/venv/bin/pip" install --no-cache-dir -r "$STAGING/requirements.txt"
+
+POSOS_DATA_DIR="$DATA_DIR" PYTHONPATH="$STAGING" \
+  "$STAGING/venv/bin/python" -c 'import posos; import posos.app; import posos.db; import posos.printer; import posos.updater'
+
+if [[ -f "$DATA_DIR/posos.db" ]]; then
+  cp -a "$DATA_DIR/posos.db" "$BACKUP_DIR/posos-before-${VERSION}-$(date +%Y%m%d-%H%M%S).db"
+fi
+
+rm -rf "$TARGET"
+mv "$STAGING" "$TARGET"
+ln -sfn "$TARGET" "$CURRENT_LINK.new"
+mv -Tf "$CURRENT_LINK.new" "$CURRENT_LINK"
+chown -R register:register /opt/posos "$DATA_DIR"
+
+printf 'Installed version: %s\n' "$VERSION" >>"$LOG_FILE"
+printf 'Previous target: %s\n' "$OLD_TARGET" >>"$LOG_FILE"
+echo "$VERSION"
