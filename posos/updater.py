@@ -80,7 +80,7 @@ def _request_text(url: str) -> str:
 
 
 def _version_tuple(version: str) -> tuple[int, ...]:
-    """Convert versions such as v2.5.0 into comparable integer tuples."""
+    """Convert versions such as v2.6.1 into comparable integer tuples."""
     cleaned = version.strip().lower().lstrip("v")
     numbers = re.findall(r"\d+", cleaned)
     if not numbers:
@@ -111,10 +111,21 @@ def github_latest_release(repo: str) -> dict:
 
 
 def _restart_into_current_version() -> None:
-    python = Path("/opt/posos/current/venv/bin/python")
+    current = Path("/opt/posos/current").resolve()
+    python = current / "venv/bin/python"
     if not python.exists():
         raise UpdateError("The new POS OS Python environment was not found")
-    os.execv(str(python), [str(python), "-m", "posos"])
+
+    # The launcher starts POS OS with its working directory inside the old
+    # version folder. Without changing directories, Python can import the old
+    # package again even after /opt/posos/current points to the new version.
+    os.chdir(current)
+    os.environ["PYTHONPATH"] = str(current)
+    os.execve(
+        str(python),
+        [str(python), "-m", "posos"],
+        os.environ.copy(),
+    )
 
 
 def install_main_update(repo: str, branch: str, expected_version: str) -> None:
