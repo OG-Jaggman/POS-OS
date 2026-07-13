@@ -8,6 +8,7 @@ from .system_controls import patch_system_controls
 from .modern_ui import patch_modern_register_ui
 from .modern_ui_runtime import patch_modern_register_runtime
 from .modern_screens import patch_modern_secondary_screens
+from .fast_transitions import patch_fast_screen_transitions
 
 patch_sales_tab()
 patch_register_saved_orders()
@@ -19,6 +20,7 @@ patch_system_controls()
 patch_modern_register_ui()
 patch_modern_register_runtime()
 patch_modern_secondary_screens()
+patch_fast_screen_transitions()
 
 if __name__ == "__main__":
     main()
