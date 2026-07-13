@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import tkinter as tk
+from datetime import datetime
+from pathlib import Path
 from tkinter import messagebox, ttk
 
 
@@ -108,6 +111,51 @@ def disconnect_wifi() -> None:
             return
 
 
+def _run_wifi_repair() -> str:
+    python = Path("/opt/posos/current/venv/bin/python")
+    if not python.exists():
+        raise NetworkError("The POS OS repair environment was not found.")
+    try:
+        result = subprocess.run(
+            ["sudo", "-n", str(python), "-m", "posos.repair"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise NetworkError(f"Could not start Wi-Fi repair: {exc}") from exc
+    if result.returncode != 0:
+        details = (result.stderr or result.stdout or "Wi-Fi repair failed").strip()
+        raise NetworkError(details)
+    return result.stdout.strip()
+
+
+def _write_diagnostic_report() -> Path:
+    data_dir = Path(os.environ.get("POSOS_DATA_DIR", "/var/lib/posos"))
+    data_dir.mkdir(parents=True, exist_ok=True)
+    report = data_dir / "network-diagnostic.txt"
+    commands = [
+        ["nmcli", "device", "status"],
+        ["nmcli", "radio", "all"],
+        ["ip", "link"],
+        ["ip", "route"],
+        ["lspci", "-k"],
+        ["sudo", "-n", "rfkill", "list"],
+    ]
+    lines = [f"POS OS network diagnostic - {datetime.now().isoformat(timespec='seconds')}", ""]
+    for command in commands:
+        lines.append(f"$ {' '.join(command)}")
+        try:
+            completed = subprocess.run(command, check=False, capture_output=True, text=True, timeout=30)
+            lines.append((completed.stdout or completed.stderr or "(no output)").strip())
+        except Exception as exc:
+            lines.append(f"ERROR: {exc}")
+        lines.append("")
+    report.write_text("\n".join(lines), encoding="utf-8")
+    return report
+
+
 def build_internet_tab(root, parent) -> None:
     status_box = ttk.LabelFrame(parent, text="Connection status", padding=12)
     status_box.pack(fill="x", pady=(0, 10))
@@ -121,7 +169,7 @@ def build_internet_tab(root, parent) -> None:
     ttk.Label(status_box, text="Wi-Fi radio:", font=("DejaVu Sans", 13, "bold")).grid(row=2, column=0, sticky="w", padx=5, pady=4)
     ttk.Label(status_box, textvariable=radio_var).grid(row=2, column=1, sticky="w", padx=5, pady=4)
 
-    tree = ttk.Treeview(parent, columns=("signal", "security", "connected"), show="tree headings", height=12)
+    tree = ttk.Treeview(parent, columns=("signal", "security", "connected"), show="tree headings", height=10)
     tree.heading("#0", text="Wi-Fi network")
     tree.heading("signal", text="Signal")
     tree.heading("security", text="Security")
@@ -140,7 +188,7 @@ def build_internet_tab(root, parent) -> None:
             wifi_var.set(wifi)
             radio_var.set("On" if enabled else "Off")
             tree.delete(*tree.get_children())
-            if enabled:
+            if enabled and wifi.lower() != "unavailable":
                 for index, network in enumerate(scan_wifi()):
                     tree.insert("", "end", iid=str(index), text=network["ssid"], values=(f"{network['signal']}%", network["security"], network["active"]))
         except NetworkError as exc:
@@ -184,16 +232,40 @@ def build_internet_tab(root, parent) -> None:
         except NetworkError as exc:
             messagebox.showerror("Internet", str(exc))
 
+    def repair_wifi():
+        if not messagebox.askyesno(
+            "Repair Wi-Fi",
+            "Repair Debian package sources and install the required Wi-Fi software?\n\n"
+            "Keep USB tethering connected if Wi-Fi packages must be downloaded.",
+        ):
+            return
+        try:
+            messagebox.showinfo("Repair Wi-Fi", "Repair is starting. This can take several minutes.")
+            result = _run_wifi_repair()
+            refresh()
+            messagebox.showinfo("Repair Wi-Fi", result or "Wi-Fi repair completed. Reboot if Wi-Fi is still unavailable.")
+        except NetworkError as exc:
+            messagebox.showerror("Wi-Fi repair failed", str(exc))
+
+    def save_report():
+        try:
+            report = _write_diagnostic_report()
+            messagebox.showinfo("Network diagnostic", f"Diagnostic report saved to:\n{report}")
+        except Exception as exc:
+            messagebox.showerror("Network diagnostic", str(exc))
+
     controls = ttk.Frame(parent)
     controls.pack(fill="x", pady=(10, 0))
     for text, command in [
         ("Refresh", refresh),
         ("Connect selected", connect_selected),
-        ("Disconnect Wi-Fi", disconnect),
+        ("Disconnect", disconnect),
         ("Wi-Fi On", lambda: set_wifi(True)),
         ("Wi-Fi Off", lambda: set_wifi(False)),
+        ("Repair Wi-Fi", repair_wifi),
+        ("Save Diagnostic", save_report),
     ]:
-        ttk.Button(controls, text=text, command=command).pack(side="left", fill="x", expand=True, padx=3, ipady=9)
+        ttk.Button(controls, text=text, command=command).pack(side="left", fill="x", expand=True, padx=2, ipady=8)
 
-    ttk.Label(parent, text="Ethernet connects automatically when a working cable is plugged in.", wraplength=850).pack(anchor="w", pady=(10, 0))
+    ttk.Label(parent, text="USB tethering appears as Ethernet. Repair Wi-Fi can install missing Debian Wi-Fi packages automatically.", wraplength=850).pack(anchor="w", pady=(10, 0))
     root.after(100, refresh)
