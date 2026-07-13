@@ -152,3 +152,19 @@ def install_sales_refund_controls(root, parent) -> None:
         wraplength=850,
     ).pack(anchor="w", pady=(8, 0))
     load()
+
+
+def patch_sales_tab() -> None:
+    """Wrap POSOS.build_sales_tab so refunds appear without rewriting app.py."""
+    from .app import POSOS
+
+    if getattr(POSOS, "_posos_refund_patch", False):
+        return
+    original = POSOS.build_sales_tab
+
+    def wrapped(self, parent):
+        original(self, parent)
+        install_sales_refund_controls(self, parent)
+
+    POSOS.build_sales_tab = wrapped
+    POSOS._posos_refund_patch = True
