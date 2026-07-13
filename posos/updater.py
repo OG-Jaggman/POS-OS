@@ -1,27 +1,85 @@
-import hashlib, json, os, shutil, tarfile, tempfile, urllib.request
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import urllib.request
 from pathlib import Path
 
-class UpdateError(RuntimeError): pass
+
+class UpdateError(RuntimeError):
+    pass
 
 
-def github_latest(repo: str):
-    req=urllib.request.Request(f'https://api.github.com/repos/{repo}/releases/latest',headers={'Accept':'application/vnd.github+json','User-Agent':'POSOS-Updater'})
-    with urllib.request.urlopen(req, timeout=15) as r:
-        return json.load(r)
+def _request_text(url: str) -> str:
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "POSOS-Updater",
+            "Cache-Control": "no-cache",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:
+        return response.read().decode("utf-8").strip()
 
 
-def check_latest(repo: str, current: str):
-    data=github_latest(repo)
-    latest=data.get('tag_name','').lstrip('v')
-    assets={a['name']:a['browser_download_url'] for a in data.get('assets',[])}
-    return {'available': bool(latest and latest != current), 'version':latest, 'notes':data.get('body',''), 'assets':assets}
+def _version_tuple(version: str) -> tuple[int, ...]:
+    """Convert versions such as v2.4.0 into comparable integer tuples."""
+    cleaned = version.strip().lower().lstrip("v")
+    numbers = re.findall(r"\d+", cleaned)
+    if not numbers:
+        return (0,)
+    values = tuple(int(number) for number in numbers[:4])
+    return values + (0,) * (4 - len(values))
 
 
-def download_and_verify(url, sha_url, destination: Path):
-    destination.parent.mkdir(parents=True,exist_ok=True)
-    urllib.request.urlretrieve(url,destination)
-    expected=urllib.request.urlopen(sha_url,timeout=15).read().decode().strip().split()[0]
-    actual=hashlib.sha256(destination.read_bytes()).hexdigest()
-    if actual.lower()!=expected.lower():
-        destination.unlink(missing_ok=True); raise UpdateError('Update checksum did not match')
+def github_main_version(repo: str, branch: str = "main") -> str:
+    url = f"https://raw.githubusercontent.com/{repo}/{branch}/VERSION"
+    version = _request_text(url).lstrip("v")
+    if not version:
+        raise UpdateError("The GitHub VERSION file was empty")
+    return version
+
+
+def github_latest_release(repo: str) -> dict:
+    request = urllib.request.Request(
+        f"https://api.github.com/repos/{repo}/releases/latest",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "POSOS-Updater",
+            "Cache-Control": "no-cache",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:
+        return json.load(response)
+
+
+def check_latest(repo: str, current: str, branch: str = "main") -> dict:
+    """Check the current POS-OS main branch instead of stale GitHub Releases."""
+    latest = github_main_version(repo, branch)
+    available = _version_tuple(latest) > _version_tuple(current)
+    return {
+        "available": available,
+        "version": latest,
+        "current": current,
+        "source": f"{branch} branch",
+        "notes": (
+            "This version is available from the current POS-OS GitHub main branch. "
+            "The installed updater currently reports availability; automatic installation is handled separately."
+            if available
+            else ""
+        ),
+        "assets": {},
+    }
+
+
+def download_and_verify(url: str, sha_url: str, destination: Path) -> str:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    urllib.request.urlretrieve(url, destination)
+    expected = _request_text(sha_url).split()[0]
+    actual = hashlib.sha256(destination.read_bytes()).hexdigest()
+    if actual.lower() != expected.lower():
+        destination.unlink(missing_ok=True)
+        raise UpdateError("Update checksum did not match")
     return actual
