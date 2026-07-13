@@ -20,4 +20,9 @@ register ALL=(root) NOPASSWD: /usr/local/sbin/posos-install-update
 SUDOERS
 chmod 0440 /etc/sudoers.d/posos-updater
 
+# Importing the updater as root installs the restricted Wi-Fi repair permission
+# and repairs Debian's CD-ROM-only package source configuration when needed.
+POSOS_DATA_DIR=/var/lib/posos PYTHONPATH="$APP" \
+  "$APP/venv/bin/python" -c 'import posos.updater'
+
 chown -R register:register /var/lib/posos /opt/posos
