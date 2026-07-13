@@ -65,6 +65,50 @@ class UpdateError(RuntimeError):
     pass
 
 
+def _repair_bookworm_apt_sources_when_root() -> None:
+    """Repair offline-installer CD-ROM-only APT configuration during an update.
+
+    The restricted update helper imports this module as root while validating a
+    staged update. That gives POS OS one safe opportunity to repair installs
+    where Debian kept only a cdrom: entry after the network mirror was skipped.
+    Normal application imports are not root and therefore do nothing.
+    """
+    if os.geteuid() != 0:
+        return
+
+    marker = Path("/var/lib/posos/.apt-sources-repaired-v271")
+    if marker.exists():
+        return
+
+    os_release = Path("/etc/os-release")
+    try:
+        release_text = os_release.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return
+    if "VERSION_CODENAME=bookworm" not in release_text and 'VERSION_CODENAME="bookworm"' not in release_text:
+        return
+
+    sources = Path("/etc/apt/sources.list")
+    backup = Path("/etc/apt/sources.list.posos-backup")
+    try:
+        if sources.exists() and not backup.exists():
+            backup.write_bytes(sources.read_bytes())
+        sources.write_text(
+            "deb http://deb.debian.org/debian bookworm main contrib non-free-firmware\n"
+            "deb http://deb.debian.org/debian bookworm-updates main contrib non-free-firmware\n"
+            "deb http://security.debian.org/debian-security bookworm-security main contrib non-free-firmware\n",
+            encoding="utf-8",
+        )
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("2.7.1\n", encoding="utf-8")
+    except OSError:
+        # Do not make the whole POS update fail solely because APT repair failed.
+        return
+
+
+_repair_bookworm_apt_sources_when_root()
+
+
 def _request_text(url: str) -> str:
     request = urllib.request.Request(
         url,
@@ -79,7 +123,7 @@ def _request_text(url: str) -> str:
 
 
 def _version_tuple(version: str) -> tuple[int, ...]:
-    """Convert versions such as v2.7.0 into comparable integer tuples."""
+    """Convert versions such as v2.7.1 into comparable integer tuples."""
     cleaned = version.strip().lower().lstrip("v")
     numbers = re.findall(r"\d+", cleaned)
     if not numbers:
