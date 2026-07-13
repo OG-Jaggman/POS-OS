@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import os
 import platform
 import shutil
 import socket
 import subprocess
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -66,9 +64,17 @@ def _escpos_bytes(text: str, cut: bool = True) -> bytes:
     return data
 
 
-def print_receipt(printer: dict, receipt_text: str) -> None:
+def _drawer_bytes(printer: dict) -> bytes:
+    # ESC p m t1 t2. Most printers use m=0 for drawer pin 2 and m=1 for pin 5.
+    pin = int(printer.get("drawer_pin") or 2)
+    connector = 1 if pin == 5 else 0
+    on_ms = max(2, min(510, int(printer.get("drawer_on_ms") or 120)))
+    off_ms = max(2, min(510, int(printer.get("drawer_off_ms") or 240)))
+    return bytes((0x1B, 0x70, connector, min(255, on_ms // 2), min(255, off_ms // 2)))
+
+
+def _send_raw(printer: dict, payload: bytes, job_name: str) -> None:
     ptype = printer.get("printer_type", "network")
-    cut = bool(printer.get("auto_cut", 1))
 
     if ptype == "network":
         host = (printer.get("host") or "").strip()
@@ -77,7 +83,7 @@ def print_receipt(printer: dict, receipt_text: str) -> None:
             raise PrinterError("Network printer IP/hostname is empty")
         try:
             with socket.create_connection((host, port), timeout=8) as sock:
-                sock.sendall(_escpos_bytes(receipt_text, cut=cut))
+                sock.sendall(payload)
         except OSError as exc:
             raise PrinterError(f"Could not reach {host}:{port}: {exc}") from exc
         return
@@ -87,11 +93,11 @@ def print_receipt(printer: dict, receipt_text: str) -> None:
         lp = shutil.which("lp")
         if not lp:
             raise PrinterError("The 'lp' command is not installed")
-        cmd = [lp]
+        cmd = [lp, "-o", "raw", "-t", job_name]
         if queue:
             cmd += ["-d", queue]
         try:
-            subprocess.run(cmd, input=receipt_text.encode("utf-8"), check=True, timeout=20)
+            subprocess.run(cmd, input=payload, check=True, timeout=20)
         except (subprocess.SubprocessError, OSError) as exc:
             raise PrinterError(f"System printer failed: {exc}") from exc
         return
@@ -104,9 +110,9 @@ def print_receipt(printer: dict, receipt_text: str) -> None:
             import win32print  # type: ignore
             handle = win32print.OpenPrinter(queue or win32print.GetDefaultPrinter())
             try:
-                job = win32print.StartDocPrinter(handle, 1, ("POS OS Receipt", None, "RAW"))
+                win32print.StartDocPrinter(handle, 1, (job_name, None, "RAW"))
                 win32print.StartPagePrinter(handle)
-                win32print.WritePrinter(handle, _escpos_bytes(receipt_text, cut=cut))
+                win32print.WritePrinter(handle, payload)
                 win32print.EndPagePrinter(handle)
                 win32print.EndDocPrinter(handle)
             finally:
@@ -120,7 +126,26 @@ def print_receipt(printer: dict, receipt_text: str) -> None:
     if ptype == "file":
         target = Path(printer.get("file_path") or Path.home() / "posos-receipt.txt")
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(receipt_text, encoding="utf-8")
+        if job_name == "POS OS Cash Drawer":
+            with target.open("a", encoding="utf-8") as handle:
+                handle.write("\n[CASH DRAWER OPEN PULSE]\n")
+        else:
+            target.write_bytes(payload)
         return
 
     raise PrinterError(f"Unsupported printer type: {ptype}")
+
+
+def print_receipt(printer: dict, receipt_text: str) -> None:
+    _send_raw(
+        printer,
+        _escpos_bytes(receipt_text, cut=bool(printer.get("auto_cut", 1))),
+        "POS OS Receipt",
+    )
+
+
+def open_cash_drawer(printer: dict, force: bool = False) -> bool:
+    if not force and not bool(printer.get("drawer_enabled", 0)):
+        return False
+    _send_raw(printer, _drawer_bytes(printer), "POS OS Cash Drawer")
+    return True
