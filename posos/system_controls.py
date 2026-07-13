@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import subprocess
 from tkinter import messagebox, ttk
 
 
 def patch_system_controls() -> None:
     from .app import POSOS
+    from .updater import UpdateError, _reboot_system
 
     if getattr(POSOS, "_posos_system_controls_patch", False):
         return
@@ -21,13 +21,10 @@ def patch_system_controls() -> None:
             ):
                 return
             try:
-                subprocess.Popen(
-                    ["sudo", "-n", "systemctl", "reboot"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    start_new_session=True,
-                )
-            except OSError as exc:
+                # Use the same tested fallback chain as the post-update reboot:
+                # systemctl, loginctl, then passwordless sudo systemctl.
+                _reboot_system()
+            except UpdateError as exc:
                 messagebox.showerror("Reboot failed", str(exc))
 
         ttk.Separator(parent).pack(fill="x", pady=12)
