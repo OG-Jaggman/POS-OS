@@ -5,10 +5,9 @@ import json
 import os
 import re
 import subprocess
-import sys
 import urllib.request
 from pathlib import Path
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
 
 # Tk's themed buttons have a fairly large default requested width. A row of
@@ -80,7 +79,7 @@ def _request_text(url: str) -> str:
 
 
 def _version_tuple(version: str) -> tuple[int, ...]:
-    """Convert versions such as v2.6.1 into comparable integer tuples."""
+    """Convert versions such as v2.7.0 into comparable integer tuples."""
     cleaned = version.strip().lower().lstrip("v")
     numbers = re.findall(r"\d+", cleaned)
     if not numbers:
@@ -110,22 +109,31 @@ def github_latest_release(repo: str) -> dict:
         return json.load(response)
 
 
-def _restart_into_current_version() -> None:
-    current = Path("/opt/posos/current").resolve()
-    python = current / "venv/bin/python"
-    if not python.exists():
-        raise UpdateError("The new POS OS Python environment was not found")
-
-    # The launcher starts POS OS with its working directory inside the old
-    # version folder. Without changing directories, Python can import the old
-    # package again even after /opt/posos/current points to the new version.
-    os.chdir(current)
-    os.environ["PYTHONPATH"] = str(current)
-    os.execve(
-        str(python),
-        [str(python), "-m", "posos"],
-        os.environ.copy(),
+def _reboot_system() -> None:
+    """Request a real Linux reboot, not merely an application restart."""
+    commands = (
+        ["systemctl", "reboot"],
+        ["loginctl", "reboot"],
+        ["sudo", "-n", "systemctl", "reboot"],
     )
+    errors: list[str] = []
+    for command in commands:
+        try:
+            completed = subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            errors.append(f"{' '.join(command)}: {exc}")
+            continue
+        if completed.returncode == 0:
+            return
+        details = (completed.stderr or completed.stdout or "permission denied").strip()
+        errors.append(f"{' '.join(command)}: {details}")
+    raise UpdateError("Linux could not reboot automatically. " + " | ".join(errors))
 
 
 def install_main_update(repo: str, branch: str, expected_version: str) -> None:
@@ -152,30 +160,45 @@ def install_main_update(repo: str, branch: str, expected_version: str) -> None:
         details = (completed.stderr or completed.stdout or "Unknown updater error").strip()
         raise UpdateError(f"Update installation failed: {details}")
 
-    _restart_into_current_version()
-
 
 def check_latest(repo: str, current: str, branch: str = "main") -> dict:
     """
     Check GitHub main. When a newer version exists on an installed POS kiosk,
-    install it, preserve /var/lib/posos, and immediately restart into it.
+    install it, preserve /var/lib/posos, then offer a full Linux reboot.
     """
     latest = github_main_version(repo, branch)
     available = _version_tuple(latest) > _version_tuple(current)
+    installed = False
 
     if available and Path("/opt/posos/current").exists():
         install_main_update(repo, branch, latest)
+        installed = True
+        reboot_now = messagebox.askyesno(
+            "POS OS Update Installed",
+            f"POS OS v{latest} was installed successfully.\n\n"
+            "Reboot the entire Linux system now to finish the update?",
+        )
+        if reboot_now:
+            try:
+                _reboot_system()
+            except UpdateError as exc:
+                messagebox.showerror("Reboot failed", str(exc))
 
     return {
         "available": available,
+        "installed": installed,
         "version": latest,
         "current": current,
         "source": f"{branch} branch",
         "notes": (
-            "A newer POS OS version is available. On an installed kiosk, pressing "
-            "Check for updates installs it automatically and restarts POS OS."
-            if available
-            else ""
+            "The update was installed. Reboot Linux to begin using the new version."
+            if installed
+            else (
+                "A newer POS OS version is available. On an installed kiosk, pressing "
+                "Check for updates installs it automatically."
+                if available
+                else ""
+            )
         ),
         "assets": {},
     }
