@@ -5,6 +5,27 @@ import json
 import re
 import urllib.request
 from pathlib import Path
+from tkinter import ttk
+
+
+# Tk's themed buttons have a fairly large default requested width. A row of
+# ten single-character touchscreen keys can therefore overflow a 1024px kiosk
+# display even when pack(expand=True) is used. Keep one-character keys compact
+# while leaving normal application buttons unchanged.
+_original_button_init = ttk.Button.__init__
+
+
+def _compact_touch_button_init(self, master=None, **kwargs):
+    text = str(kwargs.get("text", ""))
+    if len(text) == 1 or text in {"⌫", "←", "→"}:
+        kwargs.setdefault("width", 2)
+        kwargs.setdefault("padding", (1, 6))
+    _original_button_init(self, master, **kwargs)
+
+
+if not getattr(ttk.Button, "_posos_compact_keys", False):
+    ttk.Button.__init__ = _compact_touch_button_init
+    ttk.Button._posos_compact_keys = True
 
 
 class UpdateError(RuntimeError):
