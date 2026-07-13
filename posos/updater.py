@@ -31,6 +31,37 @@ if not getattr(ttk.Button, "_posos_compact_keys", False):
     ttk.Button._posos_compact_keys = True
 
 
+# Add the Internet manager page without tying the networking code to the main
+# register screen. The POS app creates its manager tabs dynamically, so this
+# hook inserts the Internet tab when the System tab is added.
+_original_notebook_add = ttk.Notebook.add
+
+
+def _posos_notebook_add(self, child, **kwargs):
+    result = _original_notebook_add(self, child, **kwargs)
+    if kwargs.get("text") == "System" and not getattr(self, "_posos_internet_added", False):
+        self._posos_internet_added = True
+        internet_tab = ttk.Frame(self, padding=8)
+        _original_notebook_add(self, internet_tab, text="Internet")
+        try:
+            from .internet import build_internet_tab
+
+            build_internet_tab(self.winfo_toplevel(), internet_tab)
+        except Exception as exc:
+            ttk.Label(
+                internet_tab,
+                text=f"Internet settings could not start:\n{exc}",
+                wraplength=800,
+                justify="center",
+            ).pack(fill="both", expand=True, padx=20, pady=20)
+    return result
+
+
+if not getattr(ttk.Notebook, "_posos_internet_hook", False):
+    ttk.Notebook.add = _posos_notebook_add
+    ttk.Notebook._posos_internet_hook = True
+
+
 class UpdateError(RuntimeError):
     pass
 
