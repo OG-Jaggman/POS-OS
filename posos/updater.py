@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import subprocess
+import sys
 import urllib.request
 from pathlib import Path
 from tkinter import ttk
@@ -46,7 +49,7 @@ def _request_text(url: str) -> str:
 
 
 def _version_tuple(version: str) -> tuple[int, ...]:
-    """Convert versions such as v2.4.0 into comparable integer tuples."""
+    """Convert versions such as v2.5.0 into comparable integer tuples."""
     cleaned = version.strip().lower().lstrip("v")
     numbers = re.findall(r"\d+", cleaned)
     if not numbers:
@@ -76,18 +79,59 @@ def github_latest_release(repo: str) -> dict:
         return json.load(response)
 
 
+def _restart_into_current_version() -> None:
+    python = Path("/opt/posos/current/venv/bin/python")
+    if not python.exists():
+        raise UpdateError("The new POS OS Python environment was not found")
+    os.execv(str(python), [str(python), "-m", "posos"])
+
+
+def install_main_update(repo: str, branch: str, expected_version: str) -> None:
+    """Install the current GitHub branch through the restricted root helper."""
+    helper = Path("/usr/local/sbin/posos-install-update")
+    if not helper.exists():
+        raise UpdateError(
+            "This POS OS installation does not contain the in-place update helper. "
+            "Install the v2.5.0 ISO once; later POS updates will not need new ISOs."
+        )
+
+    try:
+        completed = subprocess.run(
+            ["sudo", "-n", str(helper), repo, branch, expected_version],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise UpdateError(f"Could not start the update installer: {exc}") from exc
+
+    if completed.returncode != 0:
+        details = (completed.stderr or completed.stdout or "Unknown updater error").strip()
+        raise UpdateError(f"Update installation failed: {details}")
+
+    _restart_into_current_version()
+
+
 def check_latest(repo: str, current: str, branch: str = "main") -> dict:
-    """Check the current POS-OS main branch instead of stale GitHub Releases."""
+    """
+    Check GitHub main. When a newer version exists on an installed POS kiosk,
+    install it, preserve /var/lib/posos, and immediately restart into it.
+    """
     latest = github_main_version(repo, branch)
     available = _version_tuple(latest) > _version_tuple(current)
+
+    if available and Path("/opt/posos/current").exists():
+        install_main_update(repo, branch, latest)
+
     return {
         "available": available,
         "version": latest,
         "current": current,
         "source": f"{branch} branch",
         "notes": (
-            "This version is available from the current POS-OS GitHub main branch. "
-            "The installed updater currently reports availability; automatic installation is handled separately."
+            "A newer POS OS version is available. On an installed kiosk, pressing "
+            "Check for updates installs it automatically and restarts POS OS."
             if available
             else ""
         ),
