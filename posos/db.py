@@ -58,6 +58,10 @@ CREATE TABLE IF NOT EXISTS printers (
  file_path TEXT NOT NULL DEFAULT '',
  paper_width_mm INTEGER NOT NULL DEFAULT 80 CHECK(paper_width_mm IN (58,80)),
  auto_cut INTEGER NOT NULL DEFAULT 1,
+ drawer_enabled INTEGER NOT NULL DEFAULT 0,
+ drawer_pin INTEGER NOT NULL DEFAULT 2 CHECK(drawer_pin IN (2,5)),
+ drawer_on_ms INTEGER NOT NULL DEFAULT 120,
+ drawer_off_ms INTEGER NOT NULL DEFAULT 240,
  is_default INTEGER NOT NULL DEFAULT 0,
  active INTEGER NOT NULL DEFAULT 1,
  created_at TEXT NOT NULL,
@@ -73,7 +77,20 @@ class Database:
         self.conn = sqlite3.connect(self.path)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self):
+        columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(printers)")}
+        additions = {
+            "drawer_enabled": "INTEGER NOT NULL DEFAULT 0",
+            "drawer_pin": "INTEGER NOT NULL DEFAULT 2",
+            "drawer_on_ms": "INTEGER NOT NULL DEFAULT 120",
+            "drawer_off_ms": "INTEGER NOT NULL DEFAULT 240",
+        }
+        for name, definition in additions.items():
+            if name not in columns:
+                self.conn.execute(f"ALTER TABLE printers ADD COLUMN {name} {definition}")
 
     def now(self): return datetime.now().isoformat(timespec='seconds')
     def employee_count(self): return self.conn.execute('SELECT COUNT(*) FROM employees').fetchone()[0]
@@ -129,13 +146,13 @@ class Database:
         return self.conn.execute(q).fetchall()
     def printer_by_id(self,pid): return self.conn.execute('SELECT * FROM printers WHERE id=?',(pid,)).fetchone()
     def default_printer(self): return self.conn.execute('SELECT * FROM printers WHERE active=1 ORDER BY is_default DESC,id LIMIT 1').fetchone()
-    def save_printer(self,pid,name,printer_type,host,port,queue_name,file_path,paper_width_mm,auto_cut,is_default,active):
+    def save_printer(self,pid,name,printer_type,host,port,queue_name,file_path,paper_width_mm,auto_cut,drawer_enabled,drawer_pin,drawer_on_ms,drawer_off_ms,is_default,active):
         t=self.now()
         if is_default: self.conn.execute('UPDATE printers SET is_default=0')
-        values=(name,printer_type,host,int(port),queue_name,file_path,int(paper_width_mm),int(auto_cut),int(is_default),int(active),t)
+        values=(name,printer_type,host,int(port),queue_name,file_path,int(paper_width_mm),int(auto_cut),int(drawer_enabled),int(drawer_pin),int(drawer_on_ms),int(drawer_off_ms),int(is_default),int(active),t)
         if pid:
-            self.conn.execute('UPDATE printers SET name=?,printer_type=?,host=?,port=?,queue_name=?,file_path=?,paper_width_mm=?,auto_cut=?,is_default=?,active=?,updated_at=? WHERE id=?',values+(pid,))
+            self.conn.execute('UPDATE printers SET name=?,printer_type=?,host=?,port=?,queue_name=?,file_path=?,paper_width_mm=?,auto_cut=?,drawer_enabled=?,drawer_pin=?,drawer_on_ms=?,drawer_off_ms=?,is_default=?,active=?,updated_at=? WHERE id=?',values+(pid,))
         else:
-            self.conn.execute('INSERT INTO printers(name,printer_type,host,port,queue_name,file_path,paper_width_mm,auto_cut,is_default,active,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',values+(t,))
+            self.conn.execute('INSERT INTO printers(name,printer_type,host,port,queue_name,file_path,paper_width_mm,auto_cut,drawer_enabled,drawer_pin,drawer_on_ms,drawer_off_ms,is_default,active,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',values+(t,))
         self.conn.commit()
     def delete_printer(self,pid): self.conn.execute('DELETE FROM printers WHERE id=?',(pid,)); self.conn.commit()
