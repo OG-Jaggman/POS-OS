@@ -28,6 +28,8 @@ def patch_fast_manager() -> None:
             existing.focus_force()
             return
 
+        # Keep the register alive underneath. Opening Manager no longer destroys
+        # and rebuilds the checkout screen, so returning is nearly instant.
         window = tk.Toplevel(self)
         self._manager_window = window
         window.title("Manager Center")
@@ -46,6 +48,8 @@ def patch_fast_manager() -> None:
                 pass
             self._manager_window = None
             window.destroy()
+            self.lift()
+            self.focus_force()
 
         window.protocol("WM_DELETE_WINDOW", close_manager)
 
@@ -70,10 +74,19 @@ def patch_fast_manager() -> None:
         }
         tabs: dict[str, ttk.Frame] = {}
         built: set[str] = set()
+        building: set[str] = set()
         for name in builders:
             tab = ttk.Frame(notebook, padding=12, style="ModernCard.TFrame")
             tabs[name] = tab
             notebook.add(tab, text=name, sticky="nsew")
+
+        def restyle(widget):
+            for child in widget.winfo_children():
+                if isinstance(child, ttk.Treeview):
+                    child.configure(style="Modern.Treeview")
+                elif isinstance(child, ttk.Button):
+                    child.configure(style="Modern.TButton")
+                restyle(child)
 
         def build_selected(*_args):
             selected = notebook.select()
@@ -81,26 +94,30 @@ def patch_fast_manager() -> None:
                 return
             tab = window.nametowidget(selected)
             name = str(notebook.tab(tab, "text"))
-            if name in built:
+            if name in built or name in building or name not in builders:
                 return
-            built.add(name)
-            loading = ttk.Label(tab, text="Loading…", font=("DejaVu Sans", 15, "bold"))
+            building.add(name)
+            loading = ttk.Label(tab, text=f"Loading {name}…", font=("DejaVu Sans", 15, "bold"))
             loading.pack(expand=True)
             window.update_idletasks()
-            loading.destroy()
-            builders[name](tab)
 
-            def restyle(widget):
-                for child in widget.winfo_children():
-                    if isinstance(child, ttk.Treeview):
-                        child.configure(style="Modern.Treeview")
-                    elif isinstance(child, ttk.Button):
-                        child.configure(style="Modern.TButton")
-                    restyle(child)
-            restyle(tab)
+            def finish_build():
+                if not window.winfo_exists():
+                    return
+                try:
+                    loading.destroy()
+                    builders[name](tab)
+                    restyle(tab)
+                    built.add(name)
+                finally:
+                    building.discard(name)
+
+            # Let the manager window paint first, then build only the tab the
+            # manager actually opens. Other tabs stay unloaded until selected.
+            window.after(35, finish_build)
 
         notebook.bind("<<NotebookTabChanged>>", build_selected)
-        window.after_idle(build_selected)
+        window.after(25, build_selected)
 
     POSOS.manager_screen = manager_screen
     POSOS._posos_fast_manager_patch = True
