@@ -9,6 +9,7 @@ from .modern_ui import patch_modern_register_ui
 from .modern_ui_runtime import patch_modern_register_runtime
 from .modern_screens import patch_modern_secondary_screens
 from .fast_manager import patch_fast_manager
+from .direct_ethernet_printer import patch_direct_ethernet_printer
 
 patch_sales_tab()
 patch_register_saved_orders()
@@ -21,6 +22,7 @@ patch_modern_register_ui()
 patch_modern_register_runtime()
 patch_modern_secondary_screens()
 patch_fast_manager()
+patch_direct_ethernet_printer()
 
 if __name__ == "__main__":
     main()
