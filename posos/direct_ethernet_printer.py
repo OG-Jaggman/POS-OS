@@ -14,6 +14,7 @@ POS_IP = "192.168.50.1/24"
 DEFAULT_PRINTER_IP = "192.168.50.2"
 PRINTER_PORT = 9100
 CONNECTION_NAME = "POS OS Direct Printer"
+INTERFACE_SETTING = "direct_ethernet_interface"
 
 
 def _run(command: list[str], timeout: int = 20) -> subprocess.CompletedProcess[str]:
@@ -48,6 +49,12 @@ def _configure_interface(interface: str) -> None:
     if not shutil.which("nmcli"):
         raise RuntimeError("NetworkManager's nmcli command is not installed.")
 
+    available = _ethernet_interfaces()
+    if interface not in available:
+        raise RuntimeError(
+            f"The selected Ethernet port ({interface}) is no longer available. Refresh the port list and select another one."
+        )
+
     existing = subprocess.run(
         ["nmcli", "-t", "-f", "NAME", "connection", "show"],
         capture_output=True,
@@ -67,6 +74,12 @@ def _configure_interface(interface: str) -> None:
     ]
 
     if CONNECTION_NAME in existing:
+        subprocess.run(
+            ["nmcli", "connection", "down", CONNECTION_NAME],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         _run(["nmcli", "connection", "modify", CONNECTION_NAME, *common])
     else:
         _run([
@@ -77,7 +90,7 @@ def _configure_interface(interface: str) -> None:
             *common,
         ])
 
-    _run(["nmcli", "connection", "up", CONNECTION_NAME], timeout=30)
+    _run(["nmcli", "connection", "up", CONNECTION_NAME, "ifname", interface], timeout=30)
 
 
 def _port_open(host: str, port: int = PRINTER_PORT, timeout: float = 0.35) -> bool:
@@ -147,12 +160,15 @@ def _open_direct_setup(self: POSOS) -> None:
         )
         return
 
+    saved_interface = str(DB.get_setting(INTERFACE_SETTING, "") or "")
+    selected_interface = saved_interface if saved_interface in interfaces else interfaces[0]
+
     window = tk.Toplevel(self)
     window.title("Direct Ethernet Printer Setup")
     window.transient(self)
     window.grab_set()
     window.attributes("-topmost", True)
-    window.geometry("760x560")
+    window.geometry("780x590")
 
     frame = ttk.Frame(window, padding=22)
     frame.pack(fill="both", expand=True)
@@ -160,20 +176,35 @@ def _open_direct_setup(self: POSOS) -> None:
     ttk.Label(
         frame,
         text=(
-            "Connect the receipt printer directly to this register's Ethernet port. "
-            "Wi-Fi can stay connected for internet access while Ethernet is used only for the printer."
+            "Connect the receipt printer directly to a selected Ethernet port on this register. "
+            "Wi-Fi can stay connected for internet access while the chosen Ethernet port is used only for the printer."
         ),
-        wraplength=700,
+        wraplength=720,
         justify="left",
     ).pack(anchor="w", pady=(8, 18))
 
-    interface_var = tk.StringVar(value=interfaces[0])
+    interface_var = tk.StringVar(value=selected_interface)
     printer_ip_var = tk.StringVar(value=DEFAULT_PRINTER_IP)
 
     form = ttk.Frame(frame)
     form.pack(fill="x")
     ttk.Label(form, text="Register Ethernet port").grid(row=0, column=0, sticky="w", pady=7)
-    ttk.Combobox(form, textvariable=interface_var, values=interfaces, state="readonly").grid(row=0, column=1, sticky="ew", padx=8, pady=7)
+    interface_box = ttk.Combobox(form, textvariable=interface_var, values=interfaces, state="readonly")
+    interface_box.grid(row=0, column=1, sticky="ew", padx=8, pady=7)
+
+    def refresh_interfaces() -> None:
+        refreshed = _ethernet_interfaces()
+        interface_box.configure(values=refreshed)
+        if not refreshed:
+            interface_var.set("")
+            status_var.set("No Ethernet ports were found. Check the adapter and press Refresh Ports again.")
+            return
+        if interface_var.get() not in refreshed:
+            remembered = str(DB.get_setting(INTERFACE_SETTING, "") or "")
+            interface_var.set(remembered if remembered in refreshed else refreshed[0])
+        status_var.set(f"Found {len(refreshed)} Ethernet port(s). Select the one connected to the printer.")
+
+    ttk.Button(form, text="Refresh Ports", command=refresh_interfaces).grid(row=0, column=2, pady=7)
     ttk.Label(form, text="Printer IP address").grid(row=1, column=0, sticky="w", pady=7)
     ttk.Entry(form, textvariable=printer_ip_var).grid(row=1, column=1, sticky="ew", padx=8, pady=7, ipady=5)
     ttk.Button(
@@ -186,33 +217,35 @@ def _open_direct_setup(self: POSOS) -> None:
     info = ttk.Label(
         frame,
         text=(
-            "POS OS will set this port to 192.168.50.1. Set the printer to 192.168.50.2, "
-            "subnet mask 255.255.255.0, with no gateway. Most receipt printers use port 9100."
+            "POS OS will set only the selected Ethernet port to 192.168.50.1. Set the printer to 192.168.50.2, "
+            "subnet mask 255.255.255.0, with no gateway. Most receipt printers use port 9100. "
+            "Your selected port will be remembered for next time."
         ),
-        wraplength=700,
+        wraplength=720,
         justify="left",
     )
     info.pack(anchor="w", pady=16)
 
-    status_var = tk.StringVar(value="Ready. Plug in the Ethernet cable, then press Set Up & Test.")
-    ttk.Label(frame, textvariable=status_var, wraplength=700, font=("DejaVu Sans", 13, "bold")).pack(fill="x", pady=12)
+    status_var = tk.StringVar(value="Ready. Select the correct Ethernet port, plug in the cable, then press Set Up & Test.")
+    ttk.Label(frame, textvariable=status_var, wraplength=720, font=("DejaVu Sans", 13, "bold")).pack(fill="x", pady=12)
 
     controls = ttk.Frame(frame)
     controls.pack(side="bottom", fill="x")
     close_button = ttk.Button(controls, text="Close", command=window.destroy)
     close_button.pack(side="left", fill="x", expand=True, padx=(0, 5), ipady=11)
-    setup_button = ttk.Button(controls, text="Set Up & Test")
+    setup_button = ttk.Button(controls, text="Set Up Selected Port & Test")
     setup_button.pack(side="left", fill="x", expand=True, padx=(5, 0), ipady=11)
 
-    def finish_success(host: str) -> None:
+    def finish_success(host: str, interface: str) -> None:
         _save_network_printer(host)
-        status_var.set(f"Connected! Printer saved at {host}:{PRINTER_PORT}.")
+        DB.set_setting(INTERFACE_SETTING, interface)
+        status_var.set(f"Connected through {interface}! Printer saved at {host}:{PRINTER_PORT}.")
         setup_button.configure(state="normal")
         close_button.configure(state="normal")
         messagebox.showinfo(
             "Direct Ethernet Printer",
-            f"The Ethernet port is configured and the printer answered at {host}:{PRINTER_PORT}.\n\n"
-            "It is now the default receipt printer.",
+            f"Ethernet port {interface} is configured and the printer answered at {host}:{PRINTER_PORT}.\n\n"
+            "This port choice was saved and the printer is now the default receipt printer.",
             parent=window,
         )
 
@@ -225,23 +258,25 @@ def _open_direct_setup(self: POSOS) -> None:
     def worker() -> None:
         try:
             interface = interface_var.get().strip()
+            if not interface:
+                raise RuntimeError("Select an Ethernet port before starting setup.")
             preferred = printer_ip_var.get().strip() or DEFAULT_PRINTER_IP
             socket.inet_aton(preferred)
             _configure_interface(interface)
             host = _find_printer(preferred)
             if not host:
                 raise RuntimeError(
-                    "The register Ethernet port was configured, but no printer answered on port 9100. "
+                    f"Ethernet port {interface} was configured, but no printer answered on port 9100. "
                     "Check the cable and set the printer IP to 192.168.50.2 with subnet mask 255.255.255.0."
                 )
-            window.after(0, lambda: finish_success(host))
+            window.after(0, lambda: finish_success(host, interface))
         except (OSError, subprocess.SubprocessError, RuntimeError) as exc:
             window.after(0, lambda: finish_failure(str(exc)))
 
     def start() -> None:
         setup_button.configure(state="disabled")
         close_button.configure(state="disabled")
-        status_var.set("Configuring the Ethernet port and searching for the printer…")
+        status_var.set(f"Configuring {interface_var.get() or 'the selected port'} and searching for the printer…")
         threading.Thread(target=worker, daemon=True).start()
 
     setup_button.configure(command=start)
