@@ -11,6 +11,7 @@ from .modern_screens import patch_modern_secondary_screens
 from .fast_manager import patch_fast_manager
 from .direct_ethernet_printer import patch_direct_ethernet_printer
 from .internet_device_selector import patch_internet_device_selector
+from .internet_layout_fix import patch_internet_layout
 
 patch_sales_tab()
 patch_register_saved_orders()
@@ -25,6 +26,7 @@ patch_modern_secondary_screens()
 patch_fast_manager()
 patch_direct_ethernet_printer()
 patch_internet_device_selector()
+patch_internet_layout()
 
 if __name__ == "__main__":
     main()
