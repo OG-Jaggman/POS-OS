@@ -51,6 +51,34 @@ def patch_modern_register_ui() -> None:
         search_entry.pack(side="left", fill="both", expand=True, padx=12, pady=5)
         tk.Button(search_wrap, text="⌨", bd=0, bg="#f1f1ef", activebackground="#e6e4df", command=lambda: self._set_from_dialog(search_var, self.ask_text("Search", "Product name or barcode", search_var.get()))).pack(side="right", padx=7)
 
+        # Barcode scanners emulate a keyboard. This dedicated hidden field keeps
+        # scanned digits out of the product search box.
+        scan_var = tk.StringVar()
+        scanner_entry = tk.Entry(self, textvariable=scan_var, width=1, bd=0,
+                                 highlightthickness=0, fg=BG, bg=BG,
+                                 insertbackground=BG)
+        scanner_entry.place(x=-10, y=-10, width=1, height=1)
+        scan_status = tk.Label(header, text="SCANNER READY", bg=PANEL, fg="#558b2f",
+                               font=("DejaVu Sans", 8, "bold"))
+        scan_status.pack(side="left", padx=(0, 10))
+
+        def receive_barcode(_event=None):
+            barcode = scan_var.get().strip()
+            scan_var.set("")
+            if not barcode:
+                return "break"
+            item = DB.item_by_barcode(barcode)
+            if item:
+                self.add_item(item)
+                scan_status.configure(text=f"ADDED: {item['name'][:18]}", fg="#558b2f")
+            else:
+                scan_status.configure(text="BARCODE NOT FOUND", fg="#c62828")
+            scanner_entry.focus_set()
+            return "break"
+
+        scanner_entry.bind("<Return>", receive_barcode)
+        scanner_entry.bind("<KP_Enter>", receive_barcode)
+
         user_text = f"{self.current_user['name']}\n{self.current_user['role'].title()}"
         tk.Label(header, text=user_text, bg=PANEL, fg=TEXT, justify="right", font=("DejaVu Sans", 10, "bold")).pack(side="left", padx=(0, 10))
         if self.current_user["role"] == "manager":
@@ -134,12 +162,24 @@ def patch_modern_register_ui() -> None:
                 icon = tk.Label(card, text="▦", bg="#efede8", fg="#a69f94", font=("DejaVu Sans", 28), height=2)
                 icon.pack(fill="x", padx=10, pady=3)
                 tk.Label(card, text=item["name"], bg=PANEL, fg=TEXT, font=("DejaVu Sans", 10, "bold"), wraplength=125, justify="center").pack(fill="x", padx=8, pady=(5, 10))
+                def add_from_tile(_event=None, selected=item):
+                    self.add_item(selected)
+                    scanner_entry.focus_set()
                 for child in card.winfo_children():
-                    child.bind("<Button-1>", lambda _event, selected=item: self.add_item(selected))
-                card.bind("<Button-1>", lambda _event, selected=item: self.add_item(selected))
+                    child.bind("<Button-1>", add_from_tile)
+                card.bind("<Button-1>", add_from_tile)
 
         search_var.trace_add("write", refresh_products)
-        search_entry.bind("<Return>", lambda _event: (self.scan_or_search(search_var.get()), search_var.set("")))
+        def submit_search(_event=None):
+            query = search_var.get().strip()
+            item = DB.item_by_barcode(query) if query else None
+            if item:
+                self.add_item(item)
+                search_var.set("")
+                scanner_entry.focus_set()
+            return "break"
+
+        search_entry.bind("<Return>", submit_search)
 
         # Cart panel
         cart_panel = tk.Frame(main, bg=PANEL, highlightbackground=BORDER, highlightthickness=1)
@@ -208,7 +248,7 @@ def patch_modern_register_ui() -> None:
         self.refresh_cart = refresh_cart_modern
         refresh_products()
         self.refresh_cart()
-        search_entry.focus_set()
+        scanner_entry.focus_set()
 
     POSOS.register_screen = register_screen
     POSOS._posos_modern_ui_patch = True
