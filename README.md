@@ -2,16 +2,16 @@
 
 POS OS is a lightweight, offline-first touchscreen cash register application for older PCs.
 
-## v2.1 highlights
+## v2.10.0 highlights
 
 - Touch-first employee PIN login with a large on-screen number pad
-- On-screen number entry for PINs, prices, cash received, quantities, stock, and printer ports
+- On-screen number entry for PINs, prices, cash received, quantities, and stock
 - On-screen QWERTY keyboard for names, categories, searches, and settings
 - Physical keyboard, mouse, numpad, and USB barcode-scanner support remain enabled
 - Large buttons designed for a register touchscreen
 - Manager section for adding, editing, testing, enabling, and deleting receipt printers
 - 80 mm and 58 mm receipt layouts
-- Network/IP ESC/POS printers using raw TCP, normally port 9100
+- USB-connected ESC/POS receipt printers through Linux/CUPS
 - Linux/CUPS system printer queues through `lp`
 - Windows printer queues through optional `pywin32`
 - File printer for testing without physical printer hardware
@@ -44,15 +44,11 @@ POSOS_WINDOWED=1 POSOS_DATA_DIR="$PWD/test-data" python3 -m posos
 
 ## Receipt printer types
 
-Open **Manager → Receipt Printers**.
-
-### Network/IP printer
-
-Use this for Ethernet or Wi-Fi ESC/POS receipt printers. Enter the printer IP or hostname and its raw-print port. Most use port `9100`.
+Open **Manager → Printers & Drawer**.
 
 ### System / CUPS printer
 
-Use a printer already configured in Linux. Enter its CUPS queue name. Leaving the queue blank uses the system default printer.
+Connect the receipt printer by USB, make sure Linux/CUPS detects it, then enter its CUPS queue name. Leaving the queue blank uses the system default printer. POS OS no longer supports Ethernet/Wi-Fi printer connections.
 
 ### Windows printer
 
