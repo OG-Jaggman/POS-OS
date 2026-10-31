@@ -100,9 +100,23 @@ def _system_raw(printer: dict, payload: bytes) -> None:
     if queue:
         command += ["-d", queue]
     try:
-        subprocess.run(command, input=payload, check=True, timeout=20)
-    except (subprocess.SubprocessError, OSError) as exc:
-        raise PrinterError(f"System printer failed: {exc}") from exc
+        result = subprocess.run(
+            command, input=payload, check=True, timeout=30,
+            capture_output=True,
+        )
+        if result.stderr:
+            detail = result.stderr.decode("utf-8", errors="replace").strip()
+            if detail:
+                raise PrinterError(f"CUPS: {detail}")
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or b"").decode("utf-8", errors="replace").strip()
+        if not detail:
+            detail = (exc.stdout or b"").decode("utf-8", errors="replace").strip()
+        raise PrinterError(f"Could not send data to printer queue {queue or '(default)'}. {detail or exc}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise PrinterError(f"Printer queue {queue or '(default)'} did not respond within 30 seconds.") from exc
+    except OSError as exc:
+        raise PrinterError(f"Could not start the CUPS print command: {exc}") from exc
 
 
 def _windows_raw(printer: dict, payload: bytes, job_name: str) -> None:

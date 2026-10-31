@@ -612,8 +612,8 @@ class POSOS(tk.Tk):
             try:
                 print_receipt(printer, sample)
                 messagebox.showinfo("Test receipt", "A full test receipt was sent exactly like a normal sale receipt.")
-            except PrinterError as exc:
-                messagebox.showerror("Test receipt failed", str(exc))
+            except Exception as exc:
+                messagebox.showerror("Test receipt failed", f"Could not print the test receipt.\n\n{exc}", parent=self)
 
         def open_drawer():
             printer = selected_printer()
@@ -622,8 +622,8 @@ class POSOS(tk.Tk):
             try:
                 open_cash_drawer(printer, force=True)
                 messagebox.showinfo("Cash drawer", "Open-drawer pulse sent.")
-            except PrinterError as exc:
-                messagebox.showerror("Cash drawer failed", str(exc))
+            except Exception as exc:
+                messagebox.showerror("Cash drawer failed", f"Could not send the drawer-open command.\n\n{exc}", parent=self)
 
         bar = ttk.Frame(parent)
         bar.pack(fill="x", pady=(8, 0))
