@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-__version__ = "2.9.9"
+__version__ = "2.10.0"
 
 
 def _install_posos_reboot_permission() -> None:

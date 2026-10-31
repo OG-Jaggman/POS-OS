@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import platform
 import shutil
-import socket
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -91,17 +90,6 @@ def _drawer_bytes(printer: dict) -> bytes:
     return bytes((0x1B, 0x70, pin, on_ms // 2, off_ms // 2))
 
 
-def _network_send(printer: dict, payload: bytes) -> None:
-    host = (printer.get("host") or "").strip()
-    port = int(printer.get("port") or 9100)
-    if not host:
-        raise PrinterError("Network printer IP/hostname is empty")
-    try:
-        with socket.create_connection((host, port), timeout=8) as sock:
-            sock.sendall(payload)
-    except OSError as exc:
-        raise PrinterError(f"Could not reach {host}:{port}: {exc}") from exc
-
 
 def _system_raw(printer: dict, payload: bytes) -> None:
     queue = (printer.get("queue_name") or "").strip()
@@ -140,12 +128,9 @@ def _windows_raw(printer: dict, payload: bytes, job_name: str) -> None:
 
 
 def print_receipt(printer: dict, receipt_text: str) -> None:
-    printer_type = printer.get("printer_type", "network")
+    printer_type = printer.get("printer_type", "system")
     payload = _escpos_bytes(receipt_text, cut=bool(printer.get("auto_cut", 1)))
 
-    if printer_type == "network":
-        _network_send(printer, payload)
-        return
     if printer_type in {"system", "cups"}:
         _system_raw(printer, payload)
         return
@@ -164,12 +149,9 @@ def open_cash_drawer(printer: dict, force: bool = False) -> None:
     if not force and not bool(printer.get("drawer_enabled", 0)):
         return
 
-    printer_type = printer.get("printer_type", "network")
+    printer_type = printer.get("printer_type", "system")
     payload = _drawer_bytes(printer)
 
-    if printer_type == "network":
-        _network_send(printer, payload)
-        return
     if printer_type in {"system", "cups"}:
         _system_raw(printer, payload)
         return

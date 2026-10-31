@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-import subprocess
+import sqlite3
 import tkinter as tk
 from tkinter import messagebox, ttk
 
@@ -73,19 +73,28 @@ def issue_card(db, employee_id: int, raw: str, amount_cents: int) -> int:
     if amount_cents < 0:
         raise ValueError("Starting balance cannot be negative.")
     now = db.now()
-    cursor = db.conn.execute(
-        "INSERT INTO gift_cards(card_hash,last4,balance_cents,active,created_at,updated_at) VALUES(?,?,?,?,?,?)",
-        (card_hash(number), number[-4:], amount_cents, 1, now, now),
-    )
-    card_id = int(cursor.lastrowid)
-    if amount_cents:
-        db.conn.execute(
-            "INSERT INTO gift_card_transactions(gift_card_id,employee_id,amount_cents,transaction_type,created_at) VALUES(?,?,?,?,?)",
-            (card_id, employee_id, amount_cents, "issue", now),
+    try:
+        db.conn.execute("BEGIN IMMEDIATE")
+        cursor = db.conn.execute(
+            "INSERT INTO gift_cards(card_hash,last4,balance_cents,active,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+            (card_hash(number), number[-4:], amount_cents, 1, now, now),
         )
-    db.conn.commit()
-    return card_id
-
+        card_id = int(cursor.lastrowid)
+        if amount_cents:
+            db.conn.execute(
+                "INSERT INTO gift_card_transactions(gift_card_id,employee_id,amount_cents,transaction_type,created_at) VALUES(?,?,?,?,?)",
+                (card_id, employee_id, amount_cents, "issue", now),
+            )
+        db.conn.commit()
+        return card_id
+    except sqlite3.IntegrityError as exc:
+        db.conn.rollback()
+        if "gift_cards.card_hash" in str(exc):
+            raise ValueError("This gift card is already registered.") from exc
+        raise
+    except Exception:
+        db.conn.rollback()
+        raise
 
 def load_card(db, card_id: int, employee_id: int, amount_cents: int) -> None:
     if amount_cents <= 0:
@@ -301,6 +310,8 @@ def build_gift_cards_tab(root, parent) -> None:
         if not raw:
             return
         amount = root.ask_number("Issue Gift Card", "Starting balance", "0.00", decimal=True)
+        if amount is None:
+            return
         try:
             issue_card(DB, root.current_user["id"], raw, parse_money(amount or "0"))
             refresh()
@@ -319,6 +330,8 @@ def build_gift_cards_tab(root, parent) -> None:
         if cid is None:
             return
         amount = root.ask_number("Load Gift Card", "Amount to add", "10.00", decimal=True)
+        if amount is None:
+            return
         try:
             load_card(DB, cid, root.current_user["id"], parse_money(amount or "0"))
             refresh()
@@ -341,20 +354,3 @@ def build_gift_cards_tab(root, parent) -> None:
     ttk.Label(parent, text="MSR readers work as keyboards: swipe the card while the card-number field is active. Card numbers are stored as hashes; only the last four characters are displayed.", wraplength=900).pack(anchor="w", pady=8)
     refresh()
 
-
-def patch_gift_card_manager_tab() -> None:
-    if getattr(ttk.Notebook, "_posos_gift_card_hook", False):
-        return
-    original_add = ttk.Notebook.add
-
-    def add(self, child, **kwargs):
-        result = original_add(self, child, **kwargs)
-        if kwargs.get("text") == "Sales" and not getattr(self, "_posos_gift_cards_added", False):
-            self._posos_gift_cards_added = True
-            tab = ttk.Frame(self, padding=8)
-            original_add(self, tab, text="Gift Cards")
-            build_gift_cards_tab(self.winfo_toplevel(), tab)
-        return result
-
-    ttk.Notebook.add = add
-    ttk.Notebook._posos_gift_card_hook = True

@@ -19,6 +19,8 @@ def patch_fast_manager() -> None:
         return
 
     def manager_screen(self):
+        from .giftcards import build_gift_cards_tab
+
         if self.current_user["role"] != "manager":
             return
 
@@ -69,6 +71,7 @@ def patch_fast_manager() -> None:
             "Items": self.build_items_tab,
             "Employees": self.build_employees_tab,
             "Sales": self.build_sales_tab,
+            "Gift Cards": lambda parent: build_gift_cards_tab(self, parent),
             "Printers & Drawer": self.build_printers_tab,
             "System": self.build_system_tab,
         }

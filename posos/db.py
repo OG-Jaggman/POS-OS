@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS settings (
 CREATE TABLE IF NOT EXISTS printers (
  id INTEGER PRIMARY KEY,
  name TEXT NOT NULL,
- printer_type TEXT NOT NULL CHECK(printer_type IN ('network','system','cups','windows','file')),
+ printer_type TEXT NOT NULL CHECK(printer_type IN ('system','cups','windows','file')),
  host TEXT NOT NULL DEFAULT '',
  port INTEGER NOT NULL DEFAULT 9100,
  queue_name TEXT NOT NULL DEFAULT '',
@@ -91,6 +91,10 @@ class Database:
         for name, definition in additions.items():
             if name not in columns:
                 self.conn.execute(f"ALTER TABLE printers ADD COLUMN {name} {definition}")
+        # Migrate saved raw-TCP/Ethernet printers to the Linux/CUPS default queue.
+        self.conn.execute(
+            "UPDATE printers SET printer_type='system',host='',port=9100 WHERE printer_type='network'"
+        )
 
     def now(self):
         return datetime.now().isoformat(timespec="seconds")
