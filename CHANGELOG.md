@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.11.0
+- Add a dedicated Checkout button that opens the payment selection menu.
+- Add a separate barcode scanner capture field so scanned barcodes add items directly to the cart without filling the product search box.
+- Keep product search available independently for manual lookup.
+
 ## 2.10.0
 
 - Fixed the Gift Cards manager tab so the lazy-loaded Manager Center builds its registration and balance controls
