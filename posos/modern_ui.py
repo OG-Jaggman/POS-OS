@@ -85,6 +85,25 @@ def patch_modern_register_ui() -> None:
             tk.Button(header, text="Manager", bg="#eeeeeb", fg=TEXT, relief="flat", command=self.manager_screen, padx=12, pady=8).pack(side="left", padx=4)
         tk.Button(header, text="Log out", bg="#eeeeeb", fg=TEXT, relief="flat", command=self.login_screen, padx=12, pady=8).pack(side="left", padx=(4, 14))
 
+        # Bottom action bar inspired by the reference layout.
+        bottom = tk.Frame(self, bg=SIDEBAR, height=70)
+        bottom.pack(side="bottom", fill="x")
+        bottom.pack_propagate(False)
+        action_area = tk.Frame(bottom, bg=SIDEBAR)
+        action_area.pack(side="left", fill="both", expand=True)
+        actions = [
+            ("Saved Orders", getattr(self, "open_saved_orders", lambda: None)),
+            ("Save Order", getattr(self, "save_current_order", lambda: None)),
+            ("Clear", self.clear_sale),
+        ]
+        for text, command in actions:
+            tk.Button(action_area, text=text, command=command, bg=SIDEBAR, fg="white", activebackground="#6d4c41", activeforeground="white", relief="flat", font=("DejaVu Sans", 12, "bold"), padx=20).pack(side="left", fill="both", expand=True)
+
+        pay_button = tk.Button(bottom, text="CHECKOUT\n$0.00", command=self.cash_payment, bg=ACCENT, fg=TEXT, activebackground=ACCENT_DARK, relief="flat", font=("DejaVu Sans", 18, "bold"), width=15)
+        pay_button.pack(side="right", fill="y")
+        self.pay_button = pay_button
+
+
         main = tk.Frame(self, bg=BG)
         main.pack(fill="both", expand=True)
         main.grid_rowconfigure(0, weight=1)
@@ -217,24 +236,6 @@ def patch_modern_register_ui() -> None:
         totals.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 8))
         self.total_label = tk.Label(totals, text="Total: $0.00", bg="#faf9f6", fg=TEXT, font=("DejaVu Sans", 23, "bold"), anchor="e")
         self.total_label.pack(fill="x", padx=12, pady=12)
-
-        # Bottom action bar inspired by the reference layout.
-        bottom = tk.Frame(self, bg=SIDEBAR, height=70)
-        bottom.pack(side="bottom", fill="x")
-        bottom.pack_propagate(False)
-        action_area = tk.Frame(bottom, bg=SIDEBAR)
-        action_area.pack(side="left", fill="both", expand=True)
-        actions = [
-            ("Saved Orders", getattr(self, "open_saved_orders", lambda: None)),
-            ("Save Order", getattr(self, "save_current_order", lambda: None)),
-            ("Clear", self.clear_sale),
-        ]
-        for text, command in actions:
-            tk.Button(action_area, text=text, command=command, bg=SIDEBAR, fg="white", activebackground="#6d4c41", activeforeground="white", relief="flat", font=("DejaVu Sans", 12, "bold"), padx=20).pack(side="left", fill="both", expand=True)
-
-        pay_button = tk.Button(bottom, text="CHECKOUT\n$0.00", command=self.cash_payment, bg=ACCENT, fg=TEXT, activebackground=ACCENT_DARK, relief="flat", font=("DejaVu Sans", 18, "bold"), width=15)
-        pay_button.pack(side="right", fill="y")
-        self.pay_button = pay_button
 
         original_refresh_cart = self.refresh_cart
 
