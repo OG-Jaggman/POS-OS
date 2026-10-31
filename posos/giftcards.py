@@ -189,7 +189,7 @@ def patch_payment_screen() -> None:
         lines = list(self.cart.values())
         total = sum(line["qty"] * line["price_cents"] for line in lines)
         win = tk.Toplevel(self)
-        win.title("Payment")
+        win.title("Checkout")
         win.transient(self)
         win.grab_set()
         win.attributes("-topmost", True)
@@ -204,7 +204,7 @@ def patch_payment_screen() -> None:
         cash_tab = ttk.Frame(notebook, padding=18)
         card_tab = ttk.Frame(notebook, padding=18)
         notebook.add(cash_tab, text="Cash")
-        notebook.add(card_tab, text="Gift Card / MSR")
+        notebook.add(card_tab, text="Gift Card")
 
         cash_var = tk.StringVar()
         change_var = tk.StringVar(value="Change: $0.00")
