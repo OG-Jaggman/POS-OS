@@ -485,8 +485,6 @@ class POSOS(tk.Tk):
         tree.pack(fill="both", expand=True)
 
         def destination(row):
-            if row["printer_type"] == "network":
-                return f"{row['host']}:{row['port']}"
             if row["printer_type"] in ("system", "cups", "windows"):
                 return row["queue_name"] or "Default queue"
             return row["file_path"]
@@ -513,9 +511,7 @@ class POSOS(tk.Tk):
             outer.pack(fill="both", expand=True)
             defaults = {
                 "name": row["name"] if row else "Receipt Printer",
-                "type": row["printer_type"] if row else "network",
-                "host": row["host"] if row else "",
-                "port": str(row["port"] if row else 9100),
+                "type": row["printer_type"] if row else "system",
                 "queue": row["queue_name"] if row else "",
                 "file": row["file_path"] if row else str(DATA_DIR / "receipts" / "test-receipt.txt"),
                 "paper": str(row["paper_width_mm"] if row else 80),
@@ -526,9 +522,7 @@ class POSOS(tk.Tk):
             variables = {key: tk.StringVar(value=value) for key, value in defaults.items()}
             fields = [
                 ("Printer name", "name", False),
-                ("IP address / hostname", "host", False),
-                ("Port", "port", True),
-                ("System/Windows queue name", "queue", False),
+                ("USB / system printer queue", "queue", False),
                 ("Test file path", "file", False),
                 ("Drawer pulse ON (ms)", "drawer_on", True),
                 ("Drawer pulse OFF (ms)", "drawer_off", True),
@@ -540,7 +534,7 @@ class POSOS(tk.Tk):
 
             row_index = len(fields)
             ttk.Label(outer, text="Printer type").grid(row=row_index, column=0, sticky="w", pady=5)
-            ttk.Combobox(outer, textvariable=variables["type"], state="readonly", values=("network", "system", "cups", "windows", "file")).grid(row=row_index, column=1, sticky="ew", padx=6, pady=5)
+            ttk.Combobox(outer, textvariable=variables["type"], state="readonly", values=("system", "cups", "windows", "file")).grid(row=row_index, column=1, sticky="ew", padx=6, pady=5)
             row_index += 1
             ttk.Label(outer, text="Receipt paper width").grid(row=row_index, column=0, sticky="w", pady=5)
             ttk.Combobox(outer, textvariable=variables["paper"], state="readonly", values=("80", "58")).grid(row=row_index, column=1, sticky="ew", padx=6, pady=5)
@@ -558,7 +552,7 @@ class POSOS(tk.Tk):
             row_index += 1
             ttk.Checkbutton(outer, text="Use as default printer/drawer", variable=default).grid(row=row_index, column=0, columnspan=2, sticky="w", pady=6)
             row_index += 1
-            ttk.Label(outer, text="Network printers normally use raw ESC/POS on TCP port 9100. Most drawers use pin 0 with a 120/240 ms pulse.", wraplength=700).grid(row=row_index, column=0, columnspan=3, sticky="w", pady=10)
+            ttk.Label(outer, text="Connect the receipt printer by USB and configure it in Linux/CUPS. Select its printer queue above, or leave the queue blank to use the system default. Most cash drawers use pin 0 with a 120/240 ms pulse.", wraplength=700).grid(row=row_index, column=0, columnspan=3, sticky="w", pady=10)
             row_index += 1
             outer.columnconfigure(1, weight=1)
 
@@ -568,8 +562,8 @@ class POSOS(tk.Tk):
                         row["id"] if row else None,
                         variables["name"].get().strip(),
                         variables["type"].get(),
-                        variables["host"].get().strip(),
-                        int(variables["port"].get() or 9100),
+                        "",
+                        9100,
                         variables["queue"].get().strip(),
                         variables["file"].get().strip(),
                         int(variables["paper"].get()),
