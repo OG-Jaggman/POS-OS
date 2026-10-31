@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.10.0
+
+- Fixed the Gift Cards manager tab so the lazy-loaded Manager Center builds its registration and balance controls
+- Made gift card issuance transactional and added a clear duplicate-card message
+- Removed direct Ethernet and raw TCP receipt-printer support
+- Switched saved legacy network printer entries to the Linux/CUPS system queue for USB printing
+- Updated printer setup guidance for USB-connected printers
+
 ## 2.1.0
 
 - Added touch-screen numeric keypad for employee and manager PINs
