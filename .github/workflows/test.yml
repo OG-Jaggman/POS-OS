@@ -15,6 +15,31 @@ jobs:
           python-version: '3.11'
       - name: Compile Python files
         run: python -m py_compile posos/*.py
+      - name: Test gift card registration
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from tempfile import TemporaryDirectory
+          from posos.db import Database
+          from posos.giftcards import issue_card, lookup_card
+
+          with TemporaryDirectory() as directory:
+              db = Database(Path(directory) / "test.db")
+              db.add_employee("Test Manager", "test-pin-hash", "manager")
+              employee = db.employees()[0]
+              card_id = issue_card(db, employee["id"], "POSOS-TEST-1234", 2500)
+              card = lookup_card(db, "POSOS-TEST-1234")
+              assert card is not None and card["id"] == card_id
+              assert card["balance_cents"] == 2500
+              try:
+                  issue_card(db, employee["id"], "POSOS-TEST-1234", 1000)
+              except ValueError as error:
+                  assert "already registered" in str(error)
+              else:
+                  raise AssertionError("Duplicate gift card registration was accepted")
+              db.conn.close()
+          print("Gift card tests passed")
+          PY
       - name: Test receipt layouts
         run: |
           python - <<'PY'
