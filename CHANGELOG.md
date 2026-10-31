@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.11.1
+- Keep the Checkout action visible on smaller touchscreen displays.
+- Improve CUPS receipt-printing error reporting and timeout handling.
+- Show clear error messages when test receipt printing or cash-drawer commands fail.
+- Cash and POSOS Gift Card remain the only checkout payment methods.
+
+
 ## 2.11.0
 - Add a dedicated Checkout button that opens the payment selection menu.
 - Add a separate barcode scanner capture field so scanned barcodes add items directly to the cart without filling the product search box.
