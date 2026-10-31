@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.11.2
+- Correct checkout bar packing order so the Checkout button remains visible above the expanding register area.
+
+
 ## 2.11.1
 - Keep the Checkout action visible on smaller touchscreen displays.
 - Improve CUPS receipt-printing error reporting and timeout handling.
