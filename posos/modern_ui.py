@@ -220,7 +220,7 @@ def patch_modern_register_ui() -> None:
 
         # Bottom action bar inspired by the reference layout.
         bottom = tk.Frame(self, bg=SIDEBAR, height=70)
-        bottom.pack(fill="x")
+        bottom.pack(side="bottom", fill="x")
         bottom.pack_propagate(False)
         action_area = tk.Frame(bottom, bg=SIDEBAR)
         action_area.pack(side="left", fill="both", expand=True)
@@ -232,7 +232,7 @@ def patch_modern_register_ui() -> None:
         for text, command in actions:
             tk.Button(action_area, text=text, command=command, bg=SIDEBAR, fg="white", activebackground="#6d4c41", activeforeground="white", relief="flat", font=("DejaVu Sans", 12, "bold"), padx=20).pack(side="left", fill="both", expand=True)
 
-        pay_button = tk.Button(bottom, text="PAY\n$0.00", command=self.cash_payment, bg=ACCENT, fg=TEXT, activebackground=ACCENT_DARK, relief="flat", font=("DejaVu Sans", 18, "bold"), width=15)
+        pay_button = tk.Button(bottom, text="CHECKOUT\n$0.00", command=self.cash_payment, bg=ACCENT, fg=TEXT, activebackground=ACCENT_DARK, relief="flat", font=("DejaVu Sans", 18, "bold"), width=15)
         pay_button.pack(side="right", fill="y")
         self.pay_button = pay_button
 
@@ -243,7 +243,7 @@ def patch_modern_register_ui() -> None:
             count = sum(line["qty"] for line in self.cart.values())
             total = sum(line["qty"] * line["price_cents"] for line in self.cart.values())
             self.cart_count_label.configure(text=f"{count} item" if count == 1 else f"{count} items")
-            self.pay_button.configure(text=f"PAY\n{money(total)}")
+            self.pay_button.configure(text=f"CHECKOUT\n{money(total)}")
 
         self.refresh_cart = refresh_cart_modern
         refresh_products()
